@@ -1,0 +1,40 @@
+{
+  "parsing_rules": {
+    "account_patterns": [
+      "Account\\s+(?:Number\\s+)?:?\\s*([A-Z0-9\\-]{8,15})",
+      "Acct\\s+(?:No\\.?\\s+)?:?\\s*([A-Z0-9\\-]{8,15})",
+      "Account\\s+([0-9\\-]{8,15})"
+    ],
+    "date_patterns": [
+      "\\d{4}-\\d{2}-\\d{2}",
+      "\\d{2}/\\d{2}/\\d{4}",
+      "\\d{1,2}/\\d{1,2}/\\d{4}"
+    ],
+    "currency_patterns": [
+      "\\$([0-9,]+\\.\\d{2})",
+      "\\$([0-9,]+)"
+    ],
+    "transaction_keywords": [
+      "BUY", "SELL", "DIVIDEND", "INTEREST", "FEE", "DEPOSIT", "WITHDRAWAL",
+      "TRANSFER", "SPLIT", "MERGER", "REINVEST"
+    ]
+  },
+  "account_mappings": {
+    "563": {
+      "type": "Brokerage",
+      "institution": "To be determined",
+      "notes": "Main brokerage account"
+    },
+    "088": {
+      "type": "TDA Brokerage",
+      "institution": "TD Ameritrade",
+      "notes": "TD Ameritrade brokerage account"
+    }
+  },
+  "extraction_settings": {
+    "max_pages_sample": 3,
+    "sample_files_per_year": 2,
+    "output_formats": ["json", "csv", "excel"],
+    "validation_threshold": 0.95
+  }
+}

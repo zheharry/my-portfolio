@@ -1,0 +1,126 @@
+# Sensitive Financial Data - NEVER COMMIT
+Statements/
+portfolio_analysis/
+data/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+database/
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Personal/Sensitive Files
+*.pdf
+*.PDF
+*.csv
+*financial*
+*statement*
+*account*
+*broker*
+
+# Python
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environment and Configuration
+.env
+.env.local
+.env.production
+.env.development
+*.env
+config.json
+secrets.json
+credentials.json
+keys.json
+api_keys.json
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+logs/
+outputs/
+temp/
+tmp/
+*.tmp
+*.cache
+
+# Flask specific
+instance/
+.webassets-cache
+
+# Testing
+.tox/
+.coverage
+.pytest_cache/
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.VolumeIcon.icns
+
+# Windows
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Backup and recovery files
+*.bak
+*.backup
+*.old
+*.orig
+*.save
+*~
+.#*
+#*#
