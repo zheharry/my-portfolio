@@ -5,7 +5,7 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from scripts.multi_broker_parser import MultiBrokerPortfolioParser
+# from scripts.multi_broker_parser import MultiBrokerPortfolioParser
 
 app = Flask(__name__)
 
