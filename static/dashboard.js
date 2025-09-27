@@ -216,7 +216,7 @@ class PortfolioDashboard {
                 <td><span class="text-info">$${this.formatNumber(transaction.tax)}</span></td>
                 <td class="${transaction.net_amount >= 0 ? 'gain' : 'loss'}">$${this.formatNumber(transaction.net_amount)}</td>
                 <td><span class="badge bg-secondary">${transaction.broker}</span></td>
-                <td><small>${transaction.order_id}</small></td>
+                <td><small>${transaction.order_id || ''}</small></td>
             `;
             
             tbody.appendChild(row);
