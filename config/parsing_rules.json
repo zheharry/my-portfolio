@@ -43,7 +43,7 @@
       "file_patterns": ["Brokerage Statement_.*\\.PDF"],
       "account_format": "SCHWAB-{account_number}",
       "transaction_section": "Transaction Details",
-      "account_numbers": ["9740-7088", "2530-2563"],
+      "account_numbers": ["XXXX-XXXX", "YYYY-YYYY"],
       "notes": "Modern Schwab statements after TDA merger"
     },
     "CATHAY": {
@@ -59,14 +59,14 @@
       "legacy_type": "TDA Brokerage",
       "modern_type": "Schwab One International",
       "institution": "Charles Schwab (formerly TD Ameritrade)",
-      "modern_account": "9740-7088",
+      "modern_account": "XXXX-088",
       "notes": "Account migrated from TDA to Schwab"
     },
     "563": {
       "legacy_type": "Schwab Brokerage",
       "modern_type": "Schwab One International", 
       "institution": "Charles Schwab",
-      "modern_account": "2530-2563",
+      "modern_account": "YYYY-563",
       "notes": "Original Schwab account"
     }
   },

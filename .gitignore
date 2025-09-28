@@ -59,6 +59,7 @@ secrets.json
 credentials.json
 keys.json
 api_keys.json
+user_config.json
 
 # IDE and Editor files
 .vscode/

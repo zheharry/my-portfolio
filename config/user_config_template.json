@@ -1,0 +1,20 @@
+{
+  "user_settings": {
+    "account_holder_name": "Your Account Holder Name",
+    "schwab_account_numbers": {
+      "account_1": "XXXX-XXXX",
+      "account_2": "YYYY-YYYY"
+    },
+    "filename_patterns": {
+      "account_088_suffix": "_088",
+      "account_563_suffix": "_563"
+    },
+    "notes": [
+      "This is a template configuration file.",
+      "Copy this file to user_config.json and replace placeholder values with your actual data.",
+      "Never commit user_config.json to version control - it's already in .gitignore.",
+      "The parser will fall back to generic placeholders if this file is not found."
+    ]
+  },
+  "privacy_notice": "This configuration contains sensitive financial information. Keep it secure and never share it publicly."
+}

@@ -35,7 +35,7 @@ class MultiBrokerPortfolioParser:
                 'name': 'Charles Schwab (Post-Merger)',
                 'account_patterns': [r'(\d{4}-\d{4})\s+[A-Za-z]+\s+\d+[-]\d+,\s+\d{4}'],
                 'file_pattern': r'Brokerage Statement_.*\.PDF',
-                'default_accounts': ['SCHWAB-9740-7088', 'SCHWAB-2530-2563'],
+                'default_accounts': ['SCHWAB-XXXX-XXXX', 'SCHWAB-YYYY-YYYY'],  # Template - update with your account numbers
                 'note': 'Modern Schwab statements after TDA merger'
             },
             'CATHAY': {
@@ -233,19 +233,19 @@ class MultiBrokerPortfolioParser:
                 account_number = account_match.group(2)
             else:
                 account_number = account_match.group(1) if len(account_match.groups()) >= 1 else account_match.group(0)
-                account_holder = 'YUAN JUNG CHENG'  # Default from statements
+                account_holder = 'Account Holder'  # Placeholder - extracted from statements when available
             
             data['account_info']['account_id'] = f"SCHWAB-{account_number}"
             data['account_info']['account_holder'] = account_holder
         else:
             # Fallback to filename-based account identification
             if '_088' in file_path.name:
-                data['account_info']['account_id'] = 'SCHWAB-9740-7088'
+                data['account_info']['account_id'] = 'SCHWAB-XXXX-088'  # Template account pattern
             elif '_563' in file_path.name:
-                data['account_info']['account_id'] = 'SCHWAB-2530-2563'
+                data['account_info']['account_id'] = 'SCHWAB-YYYY-563'  # Template account pattern
             else:
                 data['account_info']['account_id'] = 'SCHWAB-UNKNOWN'
-            data['account_info']['account_holder'] = 'YUAN JUNG CHENG'
+            data['account_info']['account_holder'] = 'Account Holder'  # Placeholder - customize for your needs
         
         data['account_info']['institution'] = 'Charles Schwab'
         data['account_info']['account_type'] = 'Schwab One International'

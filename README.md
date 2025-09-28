@@ -30,6 +30,22 @@ A personal portfolio analysis and visualization tool that processes broker state
    pip install flask pandas sqlite3 pathlib
    ```
 
+### Configuration
+
+The parser uses generic placeholders for sensitive information by default. To customize for your specific accounts:
+
+1. **Copy the configuration template:**
+   ```bash
+   cp config/user_config_template.json config/user_config.json
+   ```
+
+2. **Edit `config/user_config.json` with your account details:**
+   - Replace `"Your Account Holder Name"` with your actual name
+   - Replace `"XXXX-XXXX"` and `"YYYY-YYYY"` with your actual account numbers
+   - Update filename patterns if your statements use different naming conventions
+
+3. **Note:** The `user_config.json` file is automatically ignored by git to protect your privacy.
+
 ### Running Portfolio Analysis
 
 #### Process All Broker Statements
@@ -105,14 +121,33 @@ static/             # Web assets (CSS, JS)
 config/             # Configuration files
 ```
 
+## Data Privacy & Security
+
+This application processes sensitive financial data with strong privacy protections:
+
+### Built-in Privacy Features
+- **No hardcoded personal data**: All sensitive information uses generic placeholders by default
+- **Local data only**: All personal financial information is stored locally and never transmitted externally
+- **Configuration protection**: User-specific settings are kept in ignored config files that never get committed to version control
+- **Secure defaults**: Parser works with anonymized data out of the box
+
+### Protected Data Types
+The `.gitignore` file is configured to prevent accidental upload of:
+- Broker statements and documents (`*.pdf`, `*.PDF`, `*.csv`)
+- Database files (`*.db`, `*.sqlite`, `*.sqlite3`)
+- Personal configuration (`user_config.json`)
+- Personal financial data patterns
+- Cache and temporary files
+
+### Privacy Best Practices
+1. **Never commit sensitive configuration files**
+2. **Use the provided template for customization**
+3. **Keep account numbers and personal names in local config only**
+4. **Review git status before committing to ensure no sensitive files are staged**
+
 ## Data Privacy
 
-This application processes sensitive financial data. All personal financial information is stored locally and never transmitted externally. The `.gitignore` file is configured to prevent accidental upload of:
-
-- Broker statements and documents
-- Database files
-- Personal financial data
-- Cache and temporary files
+This application processes sensitive financial data. All personal financial information is stored locally and never transmitted externally.
 
 ## Development Status
 
