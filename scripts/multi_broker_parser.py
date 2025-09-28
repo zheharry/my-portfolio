@@ -188,6 +188,20 @@ class MultiBrokerPortfolioParser:
             self.logger.warning(f"Could not identify broker for {file_name}")
             return 'UNKNOWN'
     
+    def calculate_net_amount(self, transaction: Dict) -> None:
+        """
+        Calculate net_amount for a transaction based on amount, fees, and taxes.
+        Net Amount = Amount - Fees - Taxes
+        
+        For TDA and Schwab transactions, this provides the actual net impact on the account.
+        """
+        amount = transaction.get('amount', 0)
+        fee = transaction.get('fee', 0)
+        tax = transaction.get('tax', 0)
+        
+        # Calculate net amount
+        transaction['net_amount'] = amount - abs(fee) - abs(tax)
+    
     def standardize_transaction_amount(self, transaction: Dict) -> None:
         """
         Standardize transaction amounts based on transaction type from a cash flow perspective:
@@ -210,6 +224,9 @@ class MultiBrokerPortfolioParser:
         # For unknown types, leave amount as is but log it
         elif transaction_type and amount != 0:
             self.logger.warning(f"Unknown transaction type '{transaction_type}' - amount not standardized")
+        
+        # Always calculate net_amount after standardizing the amount
+        self.calculate_net_amount(transaction)
     
     def parse_schwab_statement(self, text: str, file_path: Path) -> Dict:
         """Parse modern Charles Schwab statement data (post-TDA merger)"""

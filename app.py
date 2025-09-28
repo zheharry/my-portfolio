@@ -458,7 +458,7 @@ class PortfolioAPI:
             FROM transactions
             WHERE transaction_date IS NOT NULL
             GROUP BY strftime('%Y', transaction_date)
-            ORDER BY year DESC
+            ORDER BY year ASC
         """
         
         with self.get_connection() as conn:
