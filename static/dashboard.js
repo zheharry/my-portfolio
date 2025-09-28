@@ -19,7 +19,7 @@ class PortfolioDashboard {
         // Auto-apply filters on change for better UX
         const filterElements = [
             'yearFilter', 'startDateFilter', 'endDateFilter', 'brokerFilter',
-            'symbolFilter', 'transactionTypeFilter', 'institutionFilter'
+            'symbolFilter', 'transactionTypeFilter'
         ];
         
         filterElements.forEach(id => {
@@ -59,10 +59,12 @@ class PortfolioDashboard {
             const symbols = await this.fetchAPI('/api/symbols');
             this.populateSelect('symbolFilter', symbols);
 
-            // Load accounts for institutions
+            // Load accounts for combined broker/institution filter
             const accounts = await this.fetchAPI('/api/accounts');
+            const brokers = await this.fetchAPI('/api/brokers');
             const institutions = [...new Set(accounts.map(acc => acc.institution))];
-            this.populateSelect('institutionFilter', institutions);
+            const combined = [...new Set([...brokers, ...institutions])];
+            this.populateSelect('brokerFilter', combined);
 
             // Populate years (2017-2025)
             const currentYear = new Date().getFullYear();
@@ -118,7 +120,7 @@ class PortfolioDashboard {
     clearFilters() {
         const filterElements = [
             'yearFilter', 'startDateFilter', 'endDateFilter', 'brokerFilter',
-            'symbolFilter', 'transactionTypeFilter', 'institutionFilter'
+            'symbolFilter', 'transactionTypeFilter'
         ];
         
         filterElements.forEach(id => {
@@ -142,8 +144,7 @@ class PortfolioDashboard {
             'endDateFilter': 'end_date',
             'brokerFilter': 'broker',
             'symbolFilter': 'symbol',
-            'transactionTypeFilter': 'transaction_type',
-            'institutionFilter': 'institution'
+            'transactionTypeFilter': 'transaction_type'
         };
 
         Object.entries(filterMappings).forEach(([elementId, filterKey]) => {
@@ -216,7 +217,7 @@ class PortfolioDashboard {
                 <td><span class="text-info">$${this.formatNumber(transaction.tax)}</span></td>
                 <td class="${transaction.net_amount >= 0 ? 'gain' : 'loss'}">$${this.formatNumber(transaction.net_amount)}</td>
                 <td><span class="badge bg-secondary">${transaction.broker}</span></td>
-                <td><small>${transaction.order_id}</small></td>
+                <td><small>${transaction.order_id || ''}</small></td>
             `;
             
             tbody.appendChild(row);

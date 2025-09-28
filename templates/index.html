@@ -87,7 +87,7 @@
                     <input type="date" id="endDateFilter" class="form-control">
                 </div>
                 <div class="col-md-3">
-                    <label class="form-label">券商 (Broker)</label>
+                    <label class="form-label">券商/機構 (Broker/Institution)</label>
                     <select id="brokerFilter" class="form-select">
                         <option value="">所有券商 (All Brokers)</option>
                     </select>
@@ -106,17 +106,18 @@
                         <option value="">所有交易 (All Transactions)</option>
                         <option value="買進">買進 (Buy)</option>
                         <option value="賣出">賣出 (Sell)</option>
+                        <option value="DIVIDEND">股息 (Dividend)</option>
+                        <option value="INTEREST">利息 (Interest)</option>
+                        <option value="TAX">稅款 (Tax)</option>
+                        <option value="AMEX_DEBIT">AMEX付款 (AMEX Payment)</option>
+                        <option value="C1_DEBIT">Capital One付款 (C1 Payment)</option>
+                        <option value="TRANSFER_DEBIT">轉帳 (Transfer)</option>
+                        <option value="DEBIT">其他扣款 (Other Debit)</option>
                         <option value="DEPOSIT">存款 (Deposit)</option>
                         <option value="WITHDRAWAL">提款 (Withdrawal)</option>
                     </select>
                 </div>
-                <div class="col-md-3">
-                    <label class="form-label">機構 (Institution)</label>
-                    <select id="institutionFilter" class="form-select">
-                        <option value="">所有機構 (All Institutions)</option>
-                    </select>
-                </div>
-                <div class="col-md-3 d-flex align-items-end">
+                <div class="col-md-6 d-flex align-items-end">
                     <button id="applyFilters" class="btn btn-primary me-2">
                         <i class="fas fa-search"></i> 篩選 (Filter)
                     </button>
