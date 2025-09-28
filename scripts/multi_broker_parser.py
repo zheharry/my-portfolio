@@ -356,7 +356,27 @@ class MultiBrokerPortfolioParser:
                 current_year = filename_year_match.group(1)
         
         # Detect transaction format by looking at the structure
-        has_symbol_column = bool(re.search(r'Symbol/', trans_text) and re.search(r'CUSIP', trans_text))
+        # Look for indicators of detailed stock transaction format
+        has_symbol_column = bool(
+            re.search(r'Symbol/', trans_text, re.IGNORECASE) or 
+            re.search(r'Symbol\s', trans_text, re.IGNORECASE) or
+            re.search(r'CUSIP', trans_text, re.IGNORECASE) or
+            re.search(r'Quantity', trans_text, re.IGNORECASE) or
+            re.search(r'Price', trans_text, re.IGNORECASE) or
+            # Look for stock symbols in transaction data (3-5 letter codes)
+            re.search(r'\b[A-Z]{3,5}\b.*\b[A-Z]{3,5}\b', trans_text) or
+            # Look for buy/sell transaction patterns
+            re.search(r'Sold|Bought|Sale|Purchase', trans_text, re.IGNORECASE) or
+            # Look for stock transaction amounts with parentheses (indicating quantity)
+            re.search(r'\(\d+(\.\d+)?\)', trans_text)
+        )
+        
+        # Add debug logging
+        self.logger.info(f"Transaction format detection - has_symbol_column: {has_symbol_column}")
+        if has_symbol_column:
+            self.logger.info("Using detailed transaction parser (for buy/sell transactions)")
+        else:
+            self.logger.info("Using simple transaction parser (for interest/dividend only)")
         
         if has_symbol_column:
             # Complex format with detailed stock transactions
@@ -542,9 +562,11 @@ class MultiBrokerPortfolioParser:
             elif current_date and line.strip():
                 # This might be a continuation line without a date - use the current date
                 # Skip lines that are just industry fees or other non-transaction info
-                if not any(skip_word in line for skip_word in ['Industry Fee', 'NAME_PART']):  # Skip irrelevant lines
-                    # Check if this looks like a transaction line (has category/action)
-                    if any(indicator in line for indicator in ['Sale', 'Purchase', 'Buy', 'Withdrawal', 'Deposit', 'Interest', 'Dividend']):
+                if not any(skip_word in line for skip_word in ['Industry Fee', 'NAME_PART', 'Page', 'Total']):
+                    # Check if this looks like a transaction line (has category/action or stock symbols)
+                    if (any(indicator in line.lower() for indicator in ['sale', 'purchase', 'buy', 'sold', 'bought', 'withdrawal', 'deposit', 'interest', 'dividend']) or
+                        re.search(r'\b[A-Z]{3,5}\b', line) or  # Stock symbol pattern
+                        re.search(r'\(\d+', line)):  # Quantity in parentheses pattern
                         transaction = self.parse_detailed_transaction_line(line.strip(), current_date)
                         if transaction:
                             transactions.append(transaction)
@@ -569,20 +591,23 @@ class MultiBrokerPortfolioParser:
             'realized_gain_loss': 0
         }
         
-        # Identify transaction type
-        if 'Sale' in line:
+        # Identify transaction type - expand pattern matching
+        line_lower = line.lower()
+        if ('sale' in line_lower or 'sold' in line_lower or 
+            'sell' in line_lower or 'redemption' in line_lower):
             transaction['transaction_type'] = 'SELL'
-        elif 'Purchase' in line or 'Buy' in line:
+        elif ('purchase' in line_lower or 'buy' in line_lower or 
+              'bought' in line_lower or 'subscription' in line_lower):
             transaction['transaction_type'] = 'BUY'
-        elif 'Withdrawal' in line:
+        elif 'withdrawal' in line_lower:
             transaction['transaction_type'] = 'WITHDRAWAL'
-        elif 'Deposit' in line:
+        elif 'deposit' in line_lower:
             transaction['transaction_type'] = 'DEPOSIT'
-        elif 'Interest' in line and 'Credit Interest' in line:
+        elif 'interest' in line_lower and 'credit' in line_lower:
             transaction['transaction_type'] = 'INTEREST'
-        elif 'Interest' in line and 'NRA Tax' in line:
+        elif ('interest' in line_lower and 'tax' in line_lower) or 'nra tax' in line_lower:
             transaction['transaction_type'] = 'TAX'
-        elif 'Dividend' in line:
+        elif 'dividend' in line_lower:
             transaction['transaction_type'] = 'DIVIDEND'
         
         # For stock transactions, parse the structured format
@@ -607,21 +632,40 @@ class MultiBrokerPortfolioParser:
                     if company_match:
                         transaction['description'] = f"{transaction['symbol']} {company_match.group(1).strip()}"
             
-            # Parse numeric values: (quantity) price fee amount gain/loss
-            # Example: "(45.0000) 536.6201 0.01 24,147.89 13,122.89,(LT)"
-            numeric_match = re.search(r'\((\d+\.?\d*)\)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)', line)
+            # Parse numeric values with multiple pattern attempts
+            # Pattern 1: Standard format: (quantity) price fee amount gain/loss
+            numeric_match = re.search(r'\((\d+(?:\.\d+)?)\)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*([\d,]+\.?\d*)?', line)
+            
+            if not numeric_match:
+                # Pattern 2: Alternative format with different spacing
+                numeric_match = re.search(r'\((\d+(?:\.\d+)?)\)[^0-9]*([\d,]+\.?\d*)[^0-9]+([\d,]+\.?\d*)[^0-9]+([\d,]+\.?\d*)', line)
+            
+            if not numeric_match:
+                # Pattern 3: Look for quantity in parentheses and any numbers after
+                quantity_match = re.search(r'\((\d+(?:\.\d+)?)\)', line)
+                if quantity_match:
+                    # Find all numbers after the quantity
+                    after_quantity = line[quantity_match.end():]
+                    numbers = re.findall(r'[\d,]+\.?\d*', after_quantity)
+                    if len(numbers) >= 3:  # At least price, fee, amount
+                        numeric_match = type('Match', (), {
+                            'group': lambda i: quantity_match.group(1) if i == 1 else 
+                                    (numbers[i-2] if i <= len(numbers)+1 else '0')
+                        })()
+            
             if numeric_match:
                 try:
                     transaction['quantity'] = float(numeric_match.group(1).replace(',', ''))
                     transaction['price'] = float(numeric_match.group(2).replace(',', ''))
-                    transaction['fee'] = float(numeric_match.group(3).replace(',', ''))
-                    transaction['amount'] = float(numeric_match.group(4).replace(',', ''))
+                    transaction['fee'] = float(numeric_match.group(3).replace(',', '')) if numeric_match.group(3) else 0
+                    transaction['amount'] = float(numeric_match.group(4).replace(',', '')) if numeric_match.group(4) else 0
                     
-                    # Extract realized gain/loss (may have ,LT or ,ST suffix)
-                    gain_loss_str = numeric_match.group(5).replace(',', '')
-                    gain_loss_match = re.search(r'(\d+\.?\d*)', gain_loss_str)
-                    if gain_loss_match:
-                        transaction['realized_gain_loss'] = float(gain_loss_match.group(1))
+                    # Extract realized gain/loss if available
+                    if hasattr(numeric_match, 'group') and numeric_match.group(5):
+                        gain_loss_str = numeric_match.group(5).replace(',', '')
+                        gain_loss_match = re.search(r'(\d+\.?\d*)', gain_loss_str)
+                        if gain_loss_match:
+                            transaction['realized_gain_loss'] = float(gain_loss_match.group(1))
                     
                     # Set quantity sign based on transaction type
                     if transaction['transaction_type'] == 'SELL':
@@ -632,9 +676,19 @@ class MultiBrokerPortfolioParser:
                     # Use standardized amount handling
                     self.standardize_transaction_amount(transaction)
                     
-                except (ValueError, IndexError) as e:
-                    # If parsing fails, still return the transaction but with zero values
-                    pass
+                    # Add debug logging for successful stock transaction parsing
+                    self.logger.debug(f"Parsed stock transaction: {transaction['transaction_type']} {transaction['symbol']} {transaction['quantity']} @ {transaction['price']} = {transaction['amount']}")
+                    
+                except (ValueError, IndexError, AttributeError) as e:
+                    # If parsing fails, try to extract just the amount for a basic transaction
+                    self.logger.warning(f"Failed to parse stock transaction numbers: {e}")
+                    amount_match = re.search(r'([\d,]+\.?\d*)', line)
+                    if amount_match:
+                        transaction['amount'] = float(amount_match.group(1).replace(',', ''))
+                        if transaction['transaction_type'] == 'BUY':
+                            transaction['amount'] = -abs(transaction['amount'])
+                        elif transaction['transaction_type'] == 'SELL':
+                            transaction['amount'] = abs(transaction['amount'])
         
         else:
             # For non-stock transactions, look for simple amounts
