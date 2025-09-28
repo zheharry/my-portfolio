@@ -149,7 +149,7 @@ class PortfolioAPI:
             return [row[0] for row in cursor.fetchall()]
     
     def get_transactions(self, filters=None):
-        """Get filtered transactions with enhanced filtering"""
+        """Get filtered transactions with enhanced filtering and multi-select support"""
         # Broker mapping for filtering
         broker_mapping = {
             '國泰證券': 'CATHAY',
@@ -170,25 +170,67 @@ class PortfolioAPI:
                 query += " AND t.account_id = ?"
                 params.append(filters['account_id'])
             
+            # Handle multi-select broker filter
             if filters.get('broker'):
                 broker_filter = filters['broker']
-                # Check if it's a full name that needs to be mapped back to short name
-                short_name = broker_mapping.get(broker_filter, broker_filter)
-                query += " AND (t.broker = ? OR a.broker = ? OR a.institution = ?)"
-                params.extend([short_name, short_name, broker_filter])
-            
-            if filters.get('symbol'):
-                query += " AND t.symbol LIKE ?"
-                params.append(f"%{filters['symbol']}%")
-            
-            if filters.get('transaction_type'):
-                if filters['transaction_type'] == 'DEPOSIT':
-                    query += " AND t.net_amount > 0 AND t.symbol IS NULL"
-                elif filters['transaction_type'] == 'WITHDRAWAL':
-                    query += " AND t.net_amount < 0 AND t.symbol IS NULL"
+                if isinstance(broker_filter, list):
+                    if len(broker_filter) > 0:
+                        # Map full names to short names for all brokers
+                        short_names = []
+                        full_names = []
+                        for broker in broker_filter:
+                            short_name = broker_mapping.get(broker, broker)
+                            short_names.append(short_name)
+                            full_names.append(broker)
+                        
+                        placeholders = ','.join(['?' for _ in range(len(short_names) * 3)])
+                        query += f" AND (t.broker IN ({','.join(['?' for _ in short_names])}) OR a.broker IN ({','.join(['?' for _ in short_names])}) OR a.institution IN ({','.join(['?' for _ in full_names])}))"
+                        params.extend(short_names + short_names + full_names)
                 else:
-                    query += " AND t.transaction_type = ?"
-                    params.append(filters['transaction_type'])
+                    # Single broker (backward compatibility)
+                    short_name = broker_mapping.get(broker_filter, broker_filter)
+                    query += " AND (t.broker = ? OR a.broker = ? OR a.institution = ?)"
+                    params.extend([short_name, short_name, broker_filter])
+            
+            # Handle multi-select symbol filter
+            if filters.get('symbol'):
+                symbol_filter = filters['symbol']
+                if isinstance(symbol_filter, list):
+                    if len(symbol_filter) > 0:
+                        placeholders = ','.join(['?' for _ in symbol_filter])
+                        query += f" AND t.symbol IN ({placeholders})"
+                        params.extend(symbol_filter)
+                else:
+                    # Single symbol (backward compatibility)
+                    query += " AND t.symbol LIKE ?"
+                    params.append(f"%{symbol_filter}%")
+            
+            # Handle multi-select transaction type filter
+            if filters.get('transaction_type'):
+                transaction_type_filter = filters['transaction_type']
+                if isinstance(transaction_type_filter, list):
+                    if len(transaction_type_filter) > 0:
+                        conditions = []
+                        for trans_type in transaction_type_filter:
+                            if trans_type == 'DEPOSIT':
+                                conditions.append("(t.net_amount > 0 AND t.symbol IS NULL)")
+                            elif trans_type == 'WITHDRAWAL':
+                                conditions.append("(t.net_amount < 0 AND t.symbol IS NULL)")
+                            else:
+                                conditions.append("t.transaction_type = ?")
+                                params.append(trans_type)
+                        
+                        if conditions:
+                            query += f" AND ({' OR '.join(conditions)})"
+                else:
+                    # Single transaction type (backward compatibility)
+                    if transaction_type_filter == 'DEPOSIT':
+                        query += " AND t.net_amount > 0 AND t.symbol IS NULL"
+                    elif transaction_type_filter == 'WITHDRAWAL':
+                        query += " AND t.net_amount < 0 AND t.symbol IS NULL"
+                    else:
+                        query += " AND t.transaction_type = ?"
+                        params.append(transaction_type_filter)
             
             if filters.get('start_date'):
                 query += " AND t.transaction_date >= ?"
@@ -211,7 +253,14 @@ class PortfolioAPI:
                    for row in cursor.fetchall()]
     
     def get_portfolio_summary(self, filters=None):
-        """Get enhanced portfolio summary with fees"""
+        """Get enhanced portfolio summary with fees and multi-select support"""
+        # Broker mapping for filtering
+        broker_mapping = {
+            '國泰證券': 'CATHAY',
+            'Charles Schwab': 'SCHWAB', 
+            'TD Ameritrade': 'TDA'
+        }
+        
         query = """
             SELECT 
                 SUM(CASE WHEN transaction_type = '賣出' THEN net_amount ELSE 0 END) as total_sales,
@@ -228,9 +277,61 @@ class PortfolioAPI:
         
         params = []
         if filters:
+            # Handle multi-select broker filter
             if filters.get('broker'):
-                query += " AND t.broker = ?"
-                params.append(filters['broker'])
+                broker_filter = filters['broker']
+                if isinstance(broker_filter, list):
+                    if len(broker_filter) > 0:
+                        # Map full names to short names for all brokers
+                        short_names = [broker_mapping.get(broker, broker) for broker in broker_filter]
+                        placeholders = ','.join(['?' for _ in short_names])
+                        query += f" AND t.broker IN ({placeholders})"
+                        params.extend(short_names)
+                else:
+                    # Single broker (backward compatibility)
+                    short_name = broker_mapping.get(broker_filter, broker_filter)
+                    query += " AND t.broker = ?"
+                    params.append(short_name)
+            
+            # Handle multi-select symbol filter
+            if filters.get('symbol'):
+                symbol_filter = filters['symbol']
+                if isinstance(symbol_filter, list):
+                    if len(symbol_filter) > 0:
+                        placeholders = ','.join(['?' for _ in symbol_filter])
+                        query += f" AND t.symbol IN ({placeholders})"
+                        params.extend(symbol_filter)
+                else:
+                    # Single symbol (backward compatibility)
+                    query += " AND t.symbol = ?"
+                    params.append(symbol_filter)
+            
+            # Handle multi-select transaction type filter
+            if filters.get('transaction_type'):
+                transaction_type_filter = filters['transaction_type']
+                if isinstance(transaction_type_filter, list):
+                    if len(transaction_type_filter) > 0:
+                        conditions = []
+                        for trans_type in transaction_type_filter:
+                            if trans_type == 'DEPOSIT':
+                                conditions.append("(t.net_amount > 0 AND t.symbol IS NULL)")
+                            elif trans_type == 'WITHDRAWAL':
+                                conditions.append("(t.net_amount < 0 AND t.symbol IS NULL)")
+                            else:
+                                conditions.append("t.transaction_type = ?")
+                                params.append(trans_type)
+                        
+                        if conditions:
+                            query += f" AND ({' OR '.join(conditions)})"
+                else:
+                    # Single transaction type (backward compatibility)
+                    if transaction_type_filter == 'DEPOSIT':
+                        query += " AND t.net_amount > 0 AND t.symbol IS NULL"
+                    elif transaction_type_filter == 'WITHDRAWAL':
+                        query += " AND t.net_amount < 0 AND t.symbol IS NULL"
+                    else:
+                        query += " AND t.transaction_type = ?"
+                        params.append(transaction_type_filter)
             
             if filters.get('year'):
                 query += " AND strftime('%Y', t.transaction_date) = ?"
@@ -332,16 +433,16 @@ def api_transactions():
     filters = {
         'account_id': request.args.get('account_id'),
         'institution': request.args.get('institution'),
-        'broker': request.args.get('broker'),
-        'symbol': request.args.get('symbol'),
-        'transaction_type': request.args.get('transaction_type'),
+        'broker': request.args.getlist('broker'),  # Support multiple brokers
+        'symbol': request.args.getlist('symbol'),  # Support multiple symbols
+        'transaction_type': request.args.getlist('transaction_type'),  # Support multiple transaction types
         'start_date': request.args.get('start_date'),
         'end_date': request.args.get('end_date'),
         'year': request.args.get('year'),
     }
     
-    # Remove None values
-    filters = {k: v for k, v in filters.items() if v}
+    # Remove None values and empty lists
+    filters = {k: v for k, v in filters.items() if v and (not isinstance(v, list) or len(v) > 0)}
     
     transactions = portfolio_api.get_transactions(filters)
     return jsonify(transactions)
@@ -350,14 +451,16 @@ def api_transactions():
 def api_summary():
     """Get portfolio summary"""
     filters = {
-        'broker': request.args.get('broker'),
+        'broker': request.args.getlist('broker'),  # Support multiple brokers
+        'symbol': request.args.getlist('symbol'),  # Support multiple symbols  
+        'transaction_type': request.args.getlist('transaction_type'),  # Support multiple transaction types
         'year': request.args.get('year'),
         'start_date': request.args.get('start_date'),
         'end_date': request.args.get('end_date'),
     }
     
-    # Remove None values
-    filters = {k: v for k, v in filters.items() if v}
+    # Remove None values and empty lists
+    filters = {k: v for k, v in filters.items() if v and (not isinstance(v, list) or len(v) > 0)}
     
     summary = portfolio_api.get_portfolio_summary(filters)
     return jsonify(summary)

@@ -100,17 +100,40 @@ class PortfolioDashboard {
         const select = document.getElementById(selectId);
         if (!select) return;
 
-        // Keep the first option (All)
-        const firstOption = select.options[0];
-        select.innerHTML = '';
-        select.appendChild(firstOption);
+        // For multi-select, clear all options except the first placeholder
+        if (select.multiple) {
+            const firstOption = select.options[0];
+            select.innerHTML = '';
+            // Don't add the placeholder option for multi-select
+            
+            options.forEach(option => {
+                const optionElement = document.createElement('option');
+                optionElement.value = option;
+                optionElement.textContent = option;
+                select.appendChild(optionElement);
+            });
+            
+            // Add event listener for selection count updates
+            select.addEventListener('change', () => {
+                this.updateSelectionCount(selectId);
+                this.applyFilters(); // Auto-apply filters
+            });
+            
+            // Initialize count display
+            this.updateSelectionCount(selectId);
+        } else {
+            // Single select logic (keep existing for year filter etc.)
+            const firstOption = select.options[0];
+            select.innerHTML = '';
+            select.appendChild(firstOption);
 
-        options.forEach(option => {
-            const optionElement = document.createElement('option');
-            optionElement.value = option;
-            optionElement.textContent = option;
-            select.appendChild(optionElement);
-        });
+            options.forEach(option => {
+                const optionElement = document.createElement('option');
+                optionElement.value = option;
+                optionElement.textContent = option;
+                select.appendChild(optionElement);
+            });
+        }
     }
 
     // Apply filters
@@ -165,8 +188,22 @@ class PortfolioDashboard {
 
         Object.entries(filterMappings).forEach(([elementId, filterKey]) => {
             const element = document.getElementById(elementId);
-            if (element && element.value) {
-                filters[filterKey] = element.value;
+            if (element) {
+                if (element.multiple) {
+                    // Handle multi-select
+                    const selectedValues = Array.from(element.selectedOptions)
+                        .map(option => option.value)
+                        .filter(value => value !== ''); // Remove empty placeholder values
+                    
+                    if (selectedValues.length > 0) {
+                        filters[filterKey] = selectedValues;
+                    }
+                } else {
+                    // Handle single select
+                    if (element.value) {
+                        filters[filterKey] = element.value;
+                    }
+                }
             }
         });
 
@@ -176,7 +213,18 @@ class PortfolioDashboard {
     // Load transactions with current filters
     async loadTransactions() {
         try {
-            const params = new URLSearchParams(this.currentFilters);
+            const params = new URLSearchParams();
+            
+            // Handle filters, including arrays
+            Object.entries(this.currentFilters).forEach(([key, value]) => {
+                if (Array.isArray(value)) {
+                    // For arrays, add each value separately
+                    value.forEach(v => params.append(key, v));
+                } else {
+                    params.append(key, value);
+                }
+            });
+            
             this.transactions = await this.fetchAPI(`/api/transactions?${params}`);
             this.updateTransactionsTable();
         } catch (error) {
@@ -188,7 +236,18 @@ class PortfolioDashboard {
     // Load summary data
     async loadSummary() {
         try {
-            const params = new URLSearchParams(this.currentFilters);
+            const params = new URLSearchParams();
+            
+            // Handle filters, including arrays
+            Object.entries(this.currentFilters).forEach(([key, value]) => {
+                if (Array.isArray(value)) {
+                    // For arrays, add each value separately
+                    value.forEach(v => params.append(key, v));
+                } else {
+                    params.append(key, value);
+                }
+            });
+            
             const summary = await this.fetchAPI(`/api/summary?${params}`);
             this.updateSummaryCards(summary);
         } catch (error) {
@@ -523,6 +582,25 @@ class PortfolioDashboard {
         return date.toLocaleDateString('zh-TW');
     }
 
+    // Update selection count for multi-select dropdowns
+    updateSelectionCount(selectId) {
+        const select = document.getElementById(selectId);
+        const countElementId = selectId.replace('Filter', 'Count');
+        const countElement = document.getElementById(countElementId);
+        
+        if (!select || !countElement) return;
+        
+        const selectedCount = Array.from(select.selectedOptions)
+            .filter(option => option.value !== '').length;
+        
+        if (selectedCount > 0) {
+            countElement.style.display = 'block';
+            countElement.querySelector('.badge').textContent = `${selectedCount} selected`;
+        } else {
+            countElement.style.display = 'none';
+        }
+    }
+
     showLoading(show) {
         const loadingElement = document.getElementById('loadingIndicator');
         if (loadingElement) {
@@ -608,11 +686,28 @@ class PortfolioDashboard {
     }
 }
 
+// Global function for clearing multi-select filters
+function clearMultiSelect(selectId) {
+    const select = document.getElementById(selectId);
+    if (select) {
+        // Clear all selections
+        Array.from(select.options).forEach(option => {
+            option.selected = false;
+        });
+        
+        // Update count display
+        if (window.dashboard) {
+            window.dashboard.updateSelectionCount(selectId);
+            window.dashboard.applyFilters(); // Auto-apply filters after clearing
+        }
+    }
+}
+
 // Initialize dashboard when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM Content Loaded, initializing dashboard...');
     try {
-        new PortfolioDashboard();
+        window.dashboard = new PortfolioDashboard();
     } catch (error) {
         console.error('Error initializing dashboard:', error);
     }

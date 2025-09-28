@@ -58,6 +58,46 @@
             padding-left: 1rem;
             margin-bottom: 1rem;
         }
+        /* Multi-select styling */
+        .multi-select-wrapper {
+            position: relative;
+        }
+        .multi-select-wrapper select[multiple] {
+            height: auto;
+            min-height: 38px;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        .selected-count {
+            position: absolute;
+            top: -8px;
+            right: 8px;
+            z-index: 10;
+        }
+        .selected-count .badge {
+            font-size: 0.7em;
+        }
+        .multi-select-wrapper select[multiple] option:checked {
+            background-color: #007bff;
+            color: white;
+        }
+        .clear-filter-btn {
+            position: absolute;
+            top: 50%;
+            right: 30px;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: #6c757d;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+        .clear-filter-btn:hover {
+            background-color: #f8f9fa;
+            color: #495057;
+        }
     </style>
 </head>
 <body>
@@ -94,34 +134,58 @@
                 </div>
                 <div class="col-md-3">
                     <label class="form-label">券商/機構 (Broker/Institution)</label>
-                    <select id="brokerFilter" class="form-select">
-                        <option value="">所有券商 (All Brokers)</option>
-                    </select>
+                    <div class="multi-select-wrapper">
+                        <select id="brokerFilter" class="form-select" multiple>
+                            <option value="">所有券商 (All Brokers)</option>
+                        </select>
+                        <button type="button" class="clear-filter-btn" onclick="clearMultiSelect('brokerFilter')" title="Clear broker filter">
+                            <i class="fas fa-times"></i>
+                        </button>
+                        <div class="selected-count" id="brokerCount" style="display: none;">
+                            <span class="badge bg-primary">0 selected</span>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="row mt-3">
                 <div class="col-md-3">
                     <label class="form-label">股票代號 (Stock Symbol)</label>
-                    <select id="symbolFilter" class="form-select">
-                        <option value="">所有股票 (All Stocks)</option>
-                    </select>
+                    <div class="multi-select-wrapper">
+                        <select id="symbolFilter" class="form-select" multiple>
+                            <option value="">所有股票 (All Stocks)</option>
+                        </select>
+                        <button type="button" class="clear-filter-btn" onclick="clearMultiSelect('symbolFilter')" title="Clear symbol filter">
+                            <i class="fas fa-times"></i>
+                        </button>
+                        <div class="selected-count" id="symbolCount" style="display: none;">
+                            <span class="badge bg-primary">0 selected</span>
+                        </div>
+                    </div>
                 </div>
                 <div class="col-md-3">
                     <label class="form-label">交易類型 (Transaction Type)</label>
-                    <select id="transactionTypeFilter" class="form-select">
-                        <option value="">所有交易 (All Transactions)</option>
-                        <option value="買進">買進 (Buy)</option>
-                        <option value="賣出">賣出 (Sell)</option>
-                        <option value="DIVIDEND">股息 (Dividend)</option>
-                        <option value="INTEREST">利息 (Interest)</option>
-                        <option value="TAX">稅款 (Tax)</option>
-                        <option value="AMEX_DEBIT">AMEX付款 (AMEX Payment)</option>
-                        <option value="C1_DEBIT">Capital One付款 (C1 Payment)</option>
-                        <option value="TRANSFER_DEBIT">轉帳 (Transfer)</option>
-                        <option value="DEBIT">其他扣款 (Other Debit)</option>
-                        <option value="DEPOSIT">存款 (Deposit)</option>
-                        <option value="WITHDRAWAL">提款 (Withdrawal)</option>
-                    </select>
+                    <div class="multi-select-wrapper">
+                        <select id="transactionTypeFilter" class="form-select" multiple>
+                            <option value="">所有交易 (All Transactions)</option>
+                            <option value="買進">買進 (Buy)</option>
+                            <option value="賣出">賣出 (Sell)</option>
+                            <option value="DIVIDEND">股息 (Dividend)</option>
+                            <option value="INTEREST">利息 (Interest)</option>
+                            <option value="TAX">稅款 (Tax)</option>
+                            <option value="AMEX_DEBIT">AMEX付款 (AMEX Payment)</option>
+                            <option value="C1_DEBIT">Capital One付款 (C1 Payment)</option>
+                            <option value="TRANSFER_DEBIT">轉帳 (Transfer)</option>
+                            <option value="DEBIT">其他扣款 (Other Debit)</option>
+                            <option value="DEPOSIT">存款 (Deposit)</option>
+                            <option value="WITHDRAWAL">提款 (Withdrawal)</option>
+                        </select>
+                        <button type="button" class="clear-filter-btn" onclick="clearMultiSelect('transactionTypeFilter')" title="Clear transaction type filter">
+                            <i class="fas fa-times"></i>
+                        </button>
+                        <div class="selected-count" id="transactionTypeCount" style="display: none;">
+                            <span class="badge bg-primary">0 selected</span>
+                        </div>
+                    </div>
                 </div>
                 <div class="col-md-6 d-flex align-items-end">
                     <button id="applyFilters" class="btn btn-primary me-2">
