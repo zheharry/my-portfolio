@@ -1,0 +1,28 @@
+{
+  "user_settings": {
+    "account_holder_name": "Your Account Holder Name",
+    "schwab_account_mappings": {
+      "account_1": {
+        "display_name": "Schwab Account 1", 
+        "account_id_template": "SCHWAB-ACCT-001"
+      },
+      "account_2": {
+        "display_name": "Schwab Account 2",
+        "account_id_template": "SCHWAB-ACCT-002"
+      }
+    },
+    "account_detection": {
+      "use_filename_patterns": false,
+      "use_pdf_content_extraction": true,
+      "fallback_to_generic_ids": true
+    },
+    "notes": [
+      "This is a template configuration file.",
+      "Copy this file to user_config.json and customize with your preferences.",
+      "Never commit user_config.json to version control - it's already in .gitignore.",
+      "The parser uses generic patterns by default and doesn't require specific account numbers.",
+      "Account identification is done automatically from PDF content when possible."
+    ]
+  },
+  "privacy_notice": "This configuration contains optional customization settings. The parser works with generic placeholders by default to protect your privacy."
+}

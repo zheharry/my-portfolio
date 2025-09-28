@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Analysis Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .dashboard-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem 0;
+            margin-bottom: 2rem;
+        }
+        .card {
+            border: none;
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            margin-bottom: 1.5rem;
+        }
+        .card-header {
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            font-weight: 600;
+        }
+        .filter-section {
+            background-color: #f8f9fa;
+            border-radius: 0.375rem;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .summary-card {
+            transition: transform 0.2s;
+        }
+        .summary-card:hover {
+            transform: translateY(-2px);
+        }
+        .gain { color: inherit; } /* Remove green color, use default text color */
+        .loss { color: #198754; } /* Change to a different green tone instead of red */
+        .net-loss { color: #dc3545; } /* New class for NET negative amounts only */
+        .table-responsive {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+        .transaction-type-buy { background-color: #d4edda; } /* Light green */
+        .transaction-type-sell { background-color: #c8f7c5; } /* Even lighter green instead of red */
+        .btn-export {
+            margin-left: 0.5rem;
+        }
+        .year-performance {
+            border-left: 4px solid #007bff;
+            padding-left: 1rem;
+            margin-bottom: 1rem;
+        }
+        /* Multi-select styling */
+        .multi-select-wrapper {
+            position: relative;
+        }
+        .multi-select-wrapper select[multiple] {
+            height: auto;
+            min-height: 38px;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        .selected-count {
+            position: absolute;
+            top: -8px;
+            right: 8px;
+            z-index: 10;
+        }
+        .selected-count .badge {
+            font-size: 0.7em;
+        }
+        .multi-select-wrapper select[multiple] option:checked {
+            background-color: #007bff;
+            color: white;
+        }
+        
+        /* New checkbox-based multi-select styling */
+        .multi-select-container {
+            border: 1px solid #ced4da;
+            border-radius: 0.375rem;
+            background-color: #fff;
+        }
+        
+        .multi-select-controls {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.375rem 0.75rem;
+            border-bottom: 1px solid #dee2e6;
+            background-color: #f8f9fa;
+            gap: 0.5rem;
+        }
+        
+        .multi-select-controls .btn {
+            padding: 0.125rem 0.375rem;
+            font-size: 0.75rem;
+            line-height: 1.2;
+        }
+        
+        .selected-count-text {
+            font-size: 0.75rem;
+            color: #6c757d;
+            font-weight: 500;
+        }
+        
+        .multi-select-list {
+            max-height: 120px;
+            overflow-y: auto;
+            padding: 0.25rem 0;
+        }
+        
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            padding: 0.25rem 0.75rem;
+            cursor: pointer;
+        }
+        
+        .checkbox-item:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .checkbox-item input[type="checkbox"] {
+            margin-right: 0.5rem;
+            cursor: pointer;
+        }
+        
+        .checkbox-item label {
+            margin-bottom: 0;
+            cursor: pointer;
+            font-size: 0.875rem;
+            user-select: none;
+        }
+        
+        /* Custom scrollbar for multi-select lists */
+        .multi-select-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .multi-select-list::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+        
+        .multi-select-list::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+        
+        .multi-select-list::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-header">
+        <div class="container">
+            <h1 class="display-4"><i class="fas fa-chart-line"></i> Portfolio Analysis Dashboard</h1>
+            <p class="lead">Comprehensive portfolio tracking with advanced filtering and analytics</p>
+        </div>
+    </div>
+
+    <div class="container-fluid">
+        <!-- Data Freshness Alert Section -->
+        <div id="dataFreshnessAlerts" class="mb-3" style="display: none;">
+            <!-- Alerts will be populated by JavaScript -->
+        </div>
+
+        <!-- Filter Section -->
+        <div class="filter-section">
+            <h4><i class="fas fa-filter"></i> Advanced Filters</h4>
+            <div class="row">
+                <div class="col-md-3">
+                    <label class="form-label">年份 (Year)</label>
+                    <select id="yearFilter" class="form-select">
+                        <option value="">所有年份 (All Years)</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">開始日期 (Start Date)</label>
+                    <input type="date" id="startDateFilter" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">結束日期 (End Date)</label>
+                    <input type="date" id="endDateFilter" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">券商/機構 (Broker/Institution)</label>
+                    <div class="multi-select-container">
+                        <div class="multi-select-controls">
+                            <button type="button" class="btn btn-sm btn-outline-primary select-all-btn" data-target="brokerFilter">全選</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary deselect-all-btn" data-target="brokerFilter">全消</button>
+                            <span class="selected-count-text" id="brokerCount">0 / 0</span>
+                        </div>
+                        <div class="multi-select-list" id="brokerFilter" data-max-height="120px">
+                            <!-- Checkboxes will be populated here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-md-3">
+                    <label class="form-label">股票代號 (Stock Symbol)</label>
+                    <div class="multi-select-container">
+                        <div class="multi-select-controls">
+                            <button type="button" class="btn btn-sm btn-outline-primary select-all-btn" data-target="symbolFilter">全選</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary deselect-all-btn" data-target="symbolFilter">全消</button>
+                            <span class="selected-count-text" id="symbolCount">0 / 0</span>
+                        </div>
+                        <div class="multi-select-list" id="symbolFilter" data-max-height="120px">
+                            <!-- Checkboxes will be populated here -->
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">交易類型 (Transaction Type)</label>
+                    <div class="multi-select-container">
+                        <div class="multi-select-controls">
+                            <button type="button" class="btn btn-sm btn-outline-primary select-all-btn" data-target="transactionTypeFilter">全選</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary deselect-all-btn" data-target="transactionTypeFilter">全消</button>
+                            <span class="selected-count-text" id="transactionTypeCount">0 / 0</span>
+                        </div>
+                        <div class="multi-select-list" id="transactionTypeFilter" data-max-height="120px">
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_買進" value="買進" checked>
+                                <label for="txType_買進">買進 (Buy)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_賣出" value="賣出" checked>
+                                <label for="txType_賣出">賣出 (Sell)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_DIVIDEND" value="DIVIDEND" checked>
+                                <label for="txType_DIVIDEND">股息 (Dividend)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_INTEREST" value="INTEREST" checked>
+                                <label for="txType_INTEREST">利息 (Interest)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_TAX" value="TAX" checked>
+                                <label for="txType_TAX">稅款 (Tax)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_AMEX_DEBIT" value="AMEX_DEBIT" checked>
+                                <label for="txType_AMEX_DEBIT">AMEX付款 (AMEX Payment)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_C1_DEBIT" value="C1_DEBIT" checked>
+                                <label for="txType_C1_DEBIT">Capital One付款 (C1 Payment)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_TRANSFER_DEBIT" value="TRANSFER_DEBIT" checked>
+                                <label for="txType_TRANSFER_DEBIT">轉帳 (Transfer)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_DEBIT" value="DEBIT" checked>
+                                <label for="txType_DEBIT">其他扣款 (Other Debit)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_DEPOSIT" value="DEPOSIT" checked>
+                                <label for="txType_DEPOSIT">存款 (Deposit)</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_WITHDRAWAL" value="WITHDRAWAL" checked>
+                                <label for="txType_WITHDRAWAL">提款 (Withdrawal)</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">幣別 (Currency)</label>
+                    <select id="currencyFilter" class="form-select">
+                        <option value="">所有幣別 (All Currencies)</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button id="applyFilters" class="btn btn-primary me-2">
+                        <i class="fas fa-search"></i> 篩選 (Filter)
+                    </button>
+                    <button id="clearFilters" class="btn btn-secondary me-2">
+                        <i class="fas fa-times"></i> 清除 (Clear)
+                    </button>
+                    <button id="exportData" class="btn btn-success btn-export">
+                        <i class="fas fa-download"></i> 匯出 (Export)
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="row mb-4" id="summaryCards">
+            <div class="col-md-3">
+                <div class="card summary-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">總投資額 (Total Investment)</h5>
+                        <h3 class="text-primary" id="totalInvestment">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">已實現損益 (Realized P&L)</h5>
+                        <h3 id="realizedPL">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">總手續費 (Total Fees)</h5>
+                        <h3 class="text-warning" id="totalFees">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">淨收益 (Net Profit)</h5>
+                        <h3 id="netProfit">$0</h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="row mb-4">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-bar"></i> 年度績效分析 (Annual Performance)</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="performanceChart" height="300"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-pie-chart"></i> 交易分布 (Transaction Distribution)</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="distributionChart" height="300"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Year Performance Summary -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-calendar-alt"></i> 年度績效摘要 (Annual Performance Summary)</h5>
+                    </div>
+                    <div class="card-body" id="yearPerformance">
+                        <!-- Year performance will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transaction Details Table -->
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5><i class="fas fa-list"></i> 交易明細 (Transaction Details)</h5>
+                <span id="transactionCount" class="badge bg-primary">0 筆交易</span>
+            </div>
+            <div class="card-body">
+                <div class="loading" id="loadingIndicator">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">載入中...</span>
+                    </div>
+                    <p>載入交易資料中...</p>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover" id="transactionsTable">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>日期 (Date)</th>
+                                <th>股票 (Symbol)</th>
+                                <th>類型 (Type)</th>
+                                <th>數量 (Quantity)</th>
+                                <th>價格 (Price)</th>
+                                <th>金額 (Amount)</th>
+                                <th>手續費 (Fee)</th>
+                                <th>稅 (Tax)</th>
+                                <th>淨額 (Net)</th>
+                                <th>券商 (Broker)</th>
+                                <th>幣別 (Currency)</th>
+                                <th>訂單號 (Order ID)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="transactionsTableBody">
+                            <!-- Transaction data will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="static/dashboard.js"></script>
+</body>
+</html>
