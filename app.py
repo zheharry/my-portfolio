@@ -147,13 +147,9 @@ class PortfolioAPI:
                 query += " AND t.account_id = ?"
                 params.append(filters['account_id'])
             
-            if filters.get('institution'):
-                query += " AND a.institution = ?"
-                params.append(filters['institution'])
-            
             if filters.get('broker'):
-                query += " AND (t.broker = ? OR a.broker = ?)"
-                params.extend([filters['broker'], filters['broker']])
+                query += " AND (t.broker = ? OR a.broker = ? OR a.institution = ?)"
+                params.extend([filters['broker'], filters['broker'], filters['broker']])
             
             if filters.get('symbol'):
                 query += " AND t.symbol LIKE ?"
@@ -266,10 +262,8 @@ class PortfolioAPI:
 # Initialize API
 portfolio_api = PortfolioAPI()
 
-# Load CSV data on startup
-csv_path = "../Statements/證券對帳單 20250927154851.csv"
-if os.path.exists(csv_path):
-    portfolio_api.load_csv_data(csv_path)
+# Note: Removed automatic CSV loading to prevent duplicate processing
+# Use the API endpoint /api/process-all-statements to process files manually
 
 @app.route('/')
 def index():
