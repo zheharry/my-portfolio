@@ -284,6 +284,18 @@ class PortfolioAPI:
                 data['net_after_fees'] = data['realized_gain_loss'] - (data['fees'] or 0) - (data['taxes'] or 0)
                 results.append(data)
             return results
+    
+    def get_data_freshness_status(self):
+        """Get data freshness status for all brokers"""
+        from scripts.data_freshness_monitor import DataFreshnessMonitor
+        monitor = DataFreshnessMonitor(self.db_path)
+        return monitor.get_broker_freshness_status()
+    
+    def generate_data_freshness_report(self):
+        """Generate comprehensive data freshness report"""
+        from scripts.data_freshness_monitor import DataFreshnessMonitor
+        monitor = DataFreshnessMonitor(self.db_path)
+        return monitor.generate_freshness_report()
 
 # Initialize API
 portfolio_api = PortfolioAPI()
@@ -459,6 +471,36 @@ def broker_summary():
                 'broker_summary': broker_summary
             })
             
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/data-freshness')
+def api_data_freshness():
+    """Get data freshness status for all brokers"""
+    try:
+        status = portfolio_api.get_data_freshness_status()
+        return jsonify({
+            'success': True,
+            'freshness_status': status
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/data-freshness/report')
+def api_data_freshness_report():
+    """Get comprehensive data freshness report"""
+    try:
+        report = portfolio_api.generate_data_freshness_report()
+        return jsonify({
+            'success': True,
+            'report': report
+        })
     except Exception as e:
         return jsonify({
             'success': False,
