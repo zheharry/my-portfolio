@@ -725,17 +725,21 @@ class MultiBrokerPortfolioParser:
             if 'status' not in columns:
                 cursor.execute("ALTER TABLE accounts ADD COLUMN status TEXT DEFAULT 'ACTIVE'")
             
+            # Determine currency based on broker
+            currency = 'NTD' if broker == 'CATHAY' else 'USD'
+            
             cursor.execute("""
                 INSERT OR REPLACE INTO accounts 
-                (account_id, institution, broker, account_type, account_holder, created_date)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (account_id, institution, broker, account_type, account_holder, created_date, currency)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (
                 account_info.get('account_id'),
                 account_info.get('institution'),
                 broker,
                 account_info.get('account_type'),
                 account_info.get('account_holder'),
-                account_info.get('statement_date', datetime.now().isoformat())
+                account_info.get('statement_date', datetime.now().isoformat()),
+                currency
             ))
             
             conn.commit()
@@ -760,13 +764,18 @@ class MultiBrokerPortfolioParser:
                 cursor.execute("ALTER TABLE transactions ADD COLUMN source_file TEXT")
             if 'created_at' not in columns:
                 cursor.execute("ALTER TABLE transactions ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP")
+            if 'currency' not in columns:
+                cursor.execute("ALTER TABLE transactions ADD COLUMN currency TEXT DEFAULT 'USD'")
+            
+            # Determine currency based on broker
+            currency = 'NTD' if broker == 'CATHAY' else 'USD'
             
             for transaction in data['transactions']:
                 cursor.execute("""
                     INSERT OR REPLACE INTO transactions 
                     (account_id, transaction_date, symbol, transaction_type, quantity, price, 
-                     amount, fee, tax, net_amount, broker, order_id, description, source_file)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     amount, fee, tax, net_amount, broker, order_id, description, source_file, currency)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     account_id,
                     transaction.get('transaction_date'),
@@ -781,7 +790,8 @@ class MultiBrokerPortfolioParser:
                     broker,
                     transaction.get('order_id'),
                     transaction.get('description'),
-                    str(file_path)
+                    str(file_path),
+                    currency
                 ))
             
             conn.commit()

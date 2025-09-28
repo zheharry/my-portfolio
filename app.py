@@ -29,7 +29,8 @@ class PortfolioAPI:
                     broker TEXT,
                     account_type TEXT,
                     account_holder TEXT,
-                    created_date TEXT
+                    created_date TEXT,
+                    currency TEXT DEFAULT 'USD'
                 )
             """)
             
@@ -50,6 +51,7 @@ class PortfolioAPI:
                     broker TEXT,
                     order_id TEXT,
                     description TEXT,
+                    currency TEXT DEFAULT 'USD',
                     FOREIGN KEY (account_id) REFERENCES accounts (account_id)
                 )
             """)
@@ -67,11 +69,80 @@ class PortfolioAPI:
                     unrealized_gain_loss REAL,
                     statement_date TEXT,
                     broker TEXT,
+                    currency TEXT DEFAULT 'USD',
                     FOREIGN KEY (account_id) REFERENCES accounts (account_id)
                 )
             """)
             
             conn.commit()
+            
+            # Add currency columns to existing tables if they don't exist
+            self._migrate_currency_columns(cursor)
+    
+    def _migrate_currency_columns(self, cursor):
+        """Add currency columns to existing tables and populate based on broker"""
+        try:
+            # Check and add currency column to accounts table
+            cursor.execute("PRAGMA table_info(accounts)")
+            accounts_columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'currency' not in accounts_columns:
+                cursor.execute("ALTER TABLE accounts ADD COLUMN currency TEXT DEFAULT 'USD'")
+                print("Added currency column to accounts table")
+            
+            # Check and add currency column to transactions table
+            cursor.execute("PRAGMA table_info(transactions)")
+            transactions_columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'currency' not in transactions_columns:
+                cursor.execute("ALTER TABLE transactions ADD COLUMN currency TEXT DEFAULT 'USD'")
+                print("Added currency column to transactions table")
+            
+            # Check and add currency column to positions table
+            cursor.execute("PRAGMA table_info(positions)")
+            positions_columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'currency' not in positions_columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN currency TEXT DEFAULT 'USD'")
+                print("Added currency column to positions table")
+            
+            # Update existing records with appropriate currency based on broker
+            # CATHAY/國泰證券 → NTD, SCHWAB/TDA → USD
+            cursor.execute("""
+                UPDATE accounts 
+                SET currency = CASE 
+                    WHEN broker LIKE '%CATHAY%' OR broker LIKE '%國泰證券%' THEN 'NTD'
+                    WHEN broker LIKE '%SCHWAB%' OR broker LIKE '%TDA%' THEN 'USD'
+                    ELSE 'USD'
+                END
+                WHERE currency = 'USD' OR currency IS NULL
+            """)
+            
+            cursor.execute("""
+                UPDATE transactions 
+                SET currency = CASE 
+                    WHEN broker LIKE '%CATHAY%' OR broker LIKE '%國泰證券%' THEN 'NTD'
+                    WHEN broker LIKE '%SCHWAB%' OR broker LIKE '%TDA%' THEN 'USD'
+                    ELSE 'USD'
+                END
+                WHERE currency = 'USD' OR currency IS NULL
+            """)
+            
+            cursor.execute("""
+                UPDATE positions 
+                SET currency = CASE 
+                    WHEN broker LIKE '%CATHAY%' OR broker LIKE '%國泰證券%' THEN 'NTD'
+                    WHEN broker LIKE '%SCHWAB%' OR broker LIKE '%TDA%' THEN 'USD'
+                    ELSE 'USD'
+                END
+                WHERE currency = 'USD' OR currency IS NULL
+            """)
+            
+            print("Updated existing records with appropriate currency values")
+            
+        except Exception as e:
+            print(f"Migration warning: {e}")
+            # Don't fail if migration has issues
     
     def load_csv_data(self, csv_path):
         """Load and process the new CSV data (legacy 國泰證券 method)"""
@@ -148,6 +219,13 @@ class PortfolioAPI:
             cursor.execute("SELECT DISTINCT symbol FROM transactions WHERE symbol IS NOT NULL ORDER BY symbol")
             return [row[0] for row in cursor.fetchall()]
     
+    def get_currencies(self):
+        """Get all unique currencies"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT currency FROM transactions WHERE currency IS NOT NULL ORDER BY currency")
+            return [row[0] for row in cursor.fetchall()]
+    
     def get_transactions(self, filters=None):
         """Get filtered transactions with enhanced filtering"""
         # Broker mapping for filtering
@@ -201,6 +279,10 @@ class PortfolioAPI:
             if filters.get('year'):
                 query += " AND strftime('%Y', t.transaction_date) = ?"
                 params.append(str(filters['year']))
+            
+            if filters.get('currency'):
+                query += " AND t.currency = ?"
+                params.append(filters['currency'])
         
         query += " ORDER BY t.transaction_date DESC, t.id DESC"
         
@@ -243,6 +325,10 @@ class PortfolioAPI:
             if filters.get('end_date'):
                 query += " AND t.transaction_date <= ?"
                 params.append(filters['end_date'])
+            
+            if filters.get('currency'):
+                query += " AND t.currency = ?"
+                params.append(filters['currency'])
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -326,6 +412,12 @@ def api_symbols():
     symbols = portfolio_api.get_symbols()
     return jsonify(symbols)
 
+@app.route('/api/currencies')
+def api_currencies():
+    """Get all currencies"""
+    currencies = portfolio_api.get_currencies()
+    return jsonify(currencies)
+
 @app.route('/api/transactions')
 def api_transactions():
     """Get filtered transactions"""
@@ -338,6 +430,7 @@ def api_transactions():
         'start_date': request.args.get('start_date'),
         'end_date': request.args.get('end_date'),
         'year': request.args.get('year'),
+        'currency': request.args.get('currency'),
     }
     
     # Remove None values
@@ -354,6 +447,7 @@ def api_summary():
         'year': request.args.get('year'),
         'start_date': request.args.get('start_date'),
         'end_date': request.args.get('end_date'),
+        'currency': request.args.get('currency'),
     }
     
     # Remove None values
