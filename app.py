@@ -177,6 +177,34 @@ class PortfolioAPI:
     def get_connection(self):
         return sqlite3.connect(self.db_path)
     
+    def get_database_info(self):
+        """Get database timestamp and basic stats"""
+        import os
+        from datetime import datetime
+        
+        if not os.path.exists(self.db_path):
+            return None
+            
+        # Get file modification time
+        db_mtime = os.path.getmtime(self.db_path)
+        db_timestamp = datetime.fromtimestamp(db_mtime)
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get total record counts
+            cursor.execute("SELECT COUNT(*) FROM transactions")
+            transaction_count = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT COUNT(*) FROM accounts") 
+            account_count = cursor.fetchone()[0]
+            
+        return {
+            'timestamp': db_timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+            'transaction_count': transaction_count,
+            'account_count': account_count
+        }
+    
     def get_accounts(self):
         """Get all accounts with broker info"""
         with self.get_connection() as conn:
@@ -726,7 +754,8 @@ portfolio_api = PortfolioAPI()
 @app.route('/')
 def index():
     """Main dashboard page"""
-    return render_template('index.html')
+    db_info = portfolio_api.get_database_info()
+    return render_template('index.html', db_info=db_info)
 
 @app.route('/api/accounts')
 def api_accounts():
