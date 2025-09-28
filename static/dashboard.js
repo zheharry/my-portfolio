@@ -74,12 +74,9 @@ class PortfolioDashboard {
             const symbols = await this.fetchAPI('/api/symbols');
             this.populateSelect('symbolFilter', symbols);
 
-            // Load accounts for combined broker/institution filter
-            const accounts = await this.fetchAPI('/api/accounts');
+            // Load brokers (now returns normalized full names without duplicates)
             const brokers = await this.fetchAPI('/api/brokers');
-            const institutions = [...new Set(accounts.map(acc => acc.institution))];
-            const combined = [...new Set([...brokers, ...institutions])];
-            this.populateSelect('brokerFilter', combined);
+            this.populateSelect('brokerFilter', brokers);
 
             // Populate years (2017-2025)
             const currentYear = new Date().getFullYear();

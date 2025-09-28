@@ -119,11 +119,27 @@ class PortfolioAPI:
                    for row in cursor.fetchall()]
     
     def get_brokers(self):
-        """Get all unique brokers"""
+        """Get all unique brokers with normalized names"""
+        # Mapping from short names to full names
+        broker_mapping = {
+            'CATHAY': '國泰證券',
+            'SCHWAB': 'Charles Schwab', 
+            'TDA': 'TD Ameritrade'
+        }
+        
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT broker FROM transactions WHERE broker IS NOT NULL ORDER BY broker")
-            return [row[0] for row in cursor.fetchall()]
+            raw_brokers = [row[0] for row in cursor.fetchall()]
+            
+            # Convert to full names and remove duplicates
+            full_names = []
+            for broker in raw_brokers:
+                full_name = broker_mapping.get(broker, broker)
+                if full_name not in full_names:
+                    full_names.append(full_name)
+            
+            return sorted(full_names)
     
     def get_symbols(self):
         """Get all unique symbols"""
@@ -134,6 +150,13 @@ class PortfolioAPI:
     
     def get_transactions(self, filters=None):
         """Get filtered transactions with enhanced filtering"""
+        # Broker mapping for filtering
+        broker_mapping = {
+            '國泰證券': 'CATHAY',
+            'Charles Schwab': 'SCHWAB', 
+            'TD Ameritrade': 'TDA'
+        }
+        
         query = """
             SELECT t.*, a.institution, a.broker as account_broker
             FROM transactions t
@@ -148,8 +171,11 @@ class PortfolioAPI:
                 params.append(filters['account_id'])
             
             if filters.get('broker'):
+                broker_filter = filters['broker']
+                # Check if it's a full name that needs to be mapped back to short name
+                short_name = broker_mapping.get(broker_filter, broker_filter)
                 query += " AND (t.broker = ? OR a.broker = ? OR a.institution = ?)"
-                params.extend([filters['broker'], filters['broker'], filters['broker']])
+                params.extend([short_name, short_name, broker_filter])
             
             if filters.get('symbol'):
                 query += " AND t.symbol LIKE ?"
