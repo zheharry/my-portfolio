@@ -1,13 +1,19 @@
 // Dashboard JavaScript for Portfolio Analysis
 class PortfolioDashboard {
     constructor() {
+        console.log('Initializing PortfolioDashboard...');
         this.transactions = [];
         this.performanceChart = null;
         this.distributionChart = null;
         this.currentFilters = {};
         
-        this.initializeEventListeners();
-        this.loadInitialData();
+        try {
+            this.initializeEventListeners();
+            console.log('Event listeners initialized');
+            this.loadInitialData();
+        } catch (error) {
+            console.error('Error in constructor:', error);
+        }
     }
 
     // Initialize event listeners
@@ -32,17 +38,30 @@ class PortfolioDashboard {
 
     // Load initial data
     async loadInitialData() {
+        console.log('Starting to load initial data...');
         this.showLoading(true);
         try {
-            await Promise.all([
-                this.loadFilterOptions(),
-                this.loadTransactions(),
-                this.loadSummary(),
-                this.loadPerformanceData()
-            ]);
+            console.log('Loading filter options...');
+            await this.loadFilterOptions();
+            console.log('Filter options loaded');
+            
+            console.log('Loading transactions...');
+            await this.loadTransactions();
+            console.log('Transactions loaded');
+            
+            console.log('Loading summary...');
+            await this.loadSummary();
+            console.log('Summary loaded');
+            
+            console.log('Loading performance data...');
+            await this.loadPerformanceData();
+            console.log('Performance data loaded');
+            
+            console.log('All initial data loaded successfully!');
         } catch (error) {
             console.error('Error loading initial data:', error);
-            this.showError('載入資料時發生錯誤，請重新整理頁面');
+            console.error('Stack trace:', error.stack);
+            this.showError('載入資料時發生錯誤，請重新整理頁面: ' + error.message);
         } finally {
             this.showLoading(false);
         }
@@ -51,10 +70,6 @@ class PortfolioDashboard {
     // Load filter options
     async loadFilterOptions() {
         try {
-            // Load brokers
-            const brokers = await this.fetchAPI('/api/brokers');
-            this.populateSelect('brokerFilter', brokers);
-
             // Load symbols
             const symbols = await this.fetchAPI('/api/symbols');
             this.populateSelect('symbolFilter', symbols);
@@ -464,11 +479,20 @@ class PortfolioDashboard {
 
     // Utility functions
     async fetchAPI(url) {
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+        console.log(`Fetching ${url}...`);
+        try {
+            const response = await fetch(url);
+            console.log(`Response status for ${url}: ${response.status}`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            console.log(`Data received from ${url}:`, data);
+            return data;
+        } catch (error) {
+            console.error(`Error fetching ${url}:`, error);
+            throw error;
         }
-        return await response.json();
     }
 
     formatNumber(num) {
@@ -501,5 +525,10 @@ class PortfolioDashboard {
 
 // Initialize dashboard when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-    new PortfolioDashboard();
+    console.log('DOM Content Loaded, initializing dashboard...');
+    try {
+        new PortfolioDashboard();
+    } catch (error) {
+        console.error('Error initializing dashboard:', error);
+    }
 });
