@@ -1,40 +1,81 @@
 {
   "parsing_rules": {
-    "account_patterns": [
-      "Account\\s+(?:Number\\s+)?:?\\s*([A-Z0-9\\-]{8,15})",
-      "Acct\\s+(?:No\\.?\\s+)?:?\\s*([A-Z0-9\\-]{8,15})",
-      "Account\\s+([0-9\\-]{8,15})"
-    ],
+    "account_patterns": {
+      "TDA_legacy": "Account\\s+(?:Number\\s+)?:?\\s*([A-Z0-9\\-]{8,15})",
+      "SCHWAB_modern": "(\\d{4}-\\d{4})\\s+[A-Za-z]+\\s+\\d+[-]\\d+,\\s+\\d{4}",
+      "general": "Acct\\s+(?:No\\.?\\s+)?:?\\s*([A-Z0-9\\-]{8,15})"
+    },
     "date_patterns": [
       "\\d{4}-\\d{2}-\\d{2}",
       "\\d{2}/\\d{2}/\\d{4}",
-      "\\d{1,2}/\\d{1,2}/\\d{4}"
+      "\\d{1,2}/\\d{1,2}/\\d{4}",
+      "[A-Za-z]+\\s+\\d+[-]\\d+,\\s+\\d{4}"
     ],
     "currency_patterns": [
       "\\$([0-9,]+\\.\\d{2})",
-      "\\$([0-9,]+)"
+      "\\$([0-9,]+)",
+      "\\(([0-9,]+\\.\\d{2})\\)"
     ],
-    "transaction_keywords": [
-      "BUY", "SELL", "DIVIDEND", "INTEREST", "FEE", "DEPOSIT", "WITHDRAWAL",
-      "TRANSFER", "SPLIT", "MERGER", "REINVEST"
-    ]
+    "transaction_keywords": {
+      "buy_patterns": ["BUY", "PURCHASE", "Buy - Securities Purchased"],
+      "sell_patterns": ["SELL", "SALE", "Sell - Securities Sold", "Sale"],
+      "dividend_patterns": ["DIVIDEND", "DIV", "Div/Int - Income"],
+      "interest_patterns": ["INTEREST", "INT", "CREDIT INTEREST", "SCHWAB1 INT"],
+      "fee_patterns": ["FEE", "CHARGE", "Industry Fee"],
+      "deposit_patterns": ["DEPOSIT", "FUNDS RECEIVED", "WIRED FUNDS RECEIVED"],
+      "withdrawal_patterns": ["WITHDRAWAL", "WITHDRAW", "MoneyLink Txn"],
+      "transfer_patterns": ["TRANSFER", "JOURNAL", "Journal - Other"],
+      "tax_patterns": ["TAX", "NRA TAX", "NRA"]
+    }
+  },
+  "broker_configurations": {
+    "TDA": {
+      "type": "TDA Brokerage (Legacy)",
+      "institution": "TD Ameritrade",
+      "file_patterns": ["TDA - Brokerage Statement_.*\\.PDF"],
+      "account_format": "TDA-{account_number}",
+      "transaction_section": "Opening Balance",
+      "notes": "Historical TDA statements before Schwab merger"
+    },
+    "SCHWAB": {
+      "type": "Schwab One International",
+      "institution": "Charles Schwab",
+      "file_patterns": ["Brokerage Statement_.*\\.PDF"],
+      "account_format": "SCHWAB-{account_number}",
+      "transaction_section": "Transaction Details",
+      "account_numbers": ["9740-7088", "2530-2563"],
+      "notes": "Modern Schwab statements after TDA merger"
+    },
+    "CATHAY": {
+      "type": "證券戶",
+      "institution": "國泰證券",
+      "file_patterns": [".*\\.csv"],
+      "account_format": "CATHAY-{account_number}",
+      "notes": "Taiwan brokerage CSV format"
+    }
   },
   "account_mappings": {
-    "563": {
-      "type": "Brokerage",
-      "institution": "To be determined",
-      "notes": "Main brokerage account"
-    },
     "088": {
-      "type": "TDA Brokerage",
-      "institution": "TD Ameritrade",
-      "notes": "TD Ameritrade brokerage account"
+      "legacy_type": "TDA Brokerage",
+      "modern_type": "Schwab One International",
+      "institution": "Charles Schwab (formerly TD Ameritrade)",
+      "modern_account": "9740-7088",
+      "notes": "Account migrated from TDA to Schwab"
+    },
+    "563": {
+      "legacy_type": "Schwab Brokerage",
+      "modern_type": "Schwab One International", 
+      "institution": "Charles Schwab",
+      "modern_account": "2530-2563",
+      "notes": "Original Schwab account"
     }
   },
   "extraction_settings": {
     "max_pages_sample": 3,
     "sample_files_per_year": 2,
     "output_formats": ["json", "csv", "excel"],
-    "validation_threshold": 0.95
+    "validation_threshold": 0.95,
+    "schwab_transaction_detail_keywords": ["Transaction Details", "Symbol/", "Price/Rate", "Quantity"],
+    "tda_transaction_keywords": ["Opening Balance", "Cash", "Margin"]
   }
 }

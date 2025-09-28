@@ -25,16 +25,18 @@ class MultiBrokerPortfolioParser:
         # Broker configuration
         self.broker_configs = {
             'TDA': {
-                'name': 'TD Ameritrade',
+                'name': 'TD Ameritrade (Historical)',
                 'account_patterns': [r'Account\s*Number:\s*(\d{3}-\d{6})', r'Account:\s*(\d{3}-\d{6})'],
                 'file_pattern': r'TDA - Brokerage Statement_.*\.PDF',
-                'default_account': 'TDA-088'
+                'default_account': 'TDA-088',
+                'note': 'Legacy TDA statements before Schwab merger'
             },
             'SCHWAB': {
-                'name': 'Charles Schwab',
-                'account_patterns': [r'Account Number:\s*(\d{4}-\d{4})'],
+                'name': 'Charles Schwab (Post-Merger)',
+                'account_patterns': [r'(\d{4}-\d{4})\s+[A-Za-z]+\s+\d+[-]\d+,\s+\d{4}'],
                 'file_pattern': r'Brokerage Statement_.*\.PDF',
-                'default_account': 'SCHWAB-2563'
+                'default_accounts': ['SCHWAB-9740-7088', 'SCHWAB-2530-2563'],
+                'note': 'Modern Schwab statements after TDA merger'
             },
             'CATHAY': {
                 'name': '國泰證券',
@@ -126,6 +128,7 @@ class MultiBrokerPortfolioParser:
                     total_investments REAL DEFAULT 0,
                     total_account_value REAL DEFAULT 0,
                     broker TEXT,
+                    source_file TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (account_id) REFERENCES accounts (account_id)
                 )
@@ -172,18 +175,44 @@ class MultiBrokerPortfolioParser:
         """Identify broker from file name and content"""
         file_name = file_path.name
         
+        # TDA files (historical) - prefixed with "TDA"
         if 'TDA' in file_name or 'TD Ameritrade' in file_name:
             return 'TDA'
+        # Modern Schwab files (post-merger) - "Brokerage Statement_" format
         elif file_name.startswith('Brokerage Statement_') and file_path.suffix.upper() == '.PDF':
             return 'SCHWAB'
+        # Cathay Securities CSV files
         elif file_path.suffix.lower() == '.csv':
             return 'CATHAY'
         else:
             self.logger.warning(f"Could not identify broker for {file_name}")
             return 'UNKNOWN'
     
+    def standardize_transaction_amount(self, transaction: Dict) -> None:
+        """
+        Standardize transaction amounts based on transaction type from a cash flow perspective:
+        - Negative amounts (cash going out): BUY, 買進, WITHDRAWAL, TAX
+        - Positive amounts (cash coming in): SELL, 賣出, DEPOSIT, DIVIDEND, INTEREST, JOURNAL, OTHER
+        """
+        transaction_type = transaction.get('transaction_type', '')
+        amount = transaction.get('amount', 0)
+        
+        # Define transaction types that should have negative amounts (cash going out)
+        negative_types = {'BUY', '買進', 'WITHDRAWAL', 'TAX'}
+        
+        # Define transaction types that should have positive amounts (cash coming in)
+        positive_types = {'SELL', '賣出', 'DEPOSIT', 'DIVIDEND', 'INTEREST', 'JOURNAL', 'OTHER'}
+        
+        if transaction_type in negative_types:
+            transaction['amount'] = -abs(amount)
+        elif transaction_type in positive_types:
+            transaction['amount'] = abs(amount)
+        # For unknown types, leave amount as is but log it
+        elif transaction_type and amount != 0:
+            self.logger.warning(f"Unknown transaction type '{transaction_type}' - amount not standardized")
+    
     def parse_schwab_statement(self, text: str, file_path: Path) -> Dict:
-        """Parse Charles Schwab statement data"""
+        """Parse modern Charles Schwab statement data (post-TDA merger)"""
         data = {
             'account_info': {},
             'transactions': [],
@@ -191,215 +220,403 @@ class MultiBrokerPortfolioParser:
             'balances': {}
         }
         
-        # Extract account information
-        account_match = re.search(r'Account Number:\s*(\d{4}-\d{4})', text)
-        if account_match:
-            data['account_info']['account_id'] = f"SCHWAB-{account_match.group(1)}"
-            data['account_info']['institution'] = 'Charles Schwab'
-            data['account_info']['account_type'] = 'International Brokerage'
-            data['account_info']['broker'] = 'SCHWAB'
+        # Extract account information - new Schwab format
+        # Look for "Schwab One International® Account of" and account number
+        account_match = re.search(r'Account Number\s+Statement Period\s*([A-Z\s]+)\s+(\d{4}-\d{4})', text)
+        if not account_match:
+            # Fallback pattern
+            account_match = re.search(r'(\d{4}-\d{4})\s+[A-Za-z]+\s+\d+[-]\d+,\s+\d{4}', text)
         
-        # Extract account holder
-        holder_match = re.search(r'Account Of\s+([A-Z\s]+)', text, re.MULTILINE)
-        if holder_match:
-            data['account_info']['account_holder'] = holder_match.group(1).strip()
+        if account_match:
+            if len(account_match.groups()) == 2:
+                account_holder = account_match.group(1).strip()
+                account_number = account_match.group(2)
+            else:
+                account_number = account_match.group(1) if len(account_match.groups()) >= 1 else account_match.group(0)
+                account_holder = 'YUAN JUNG CHENG'  # Default from statements
+            
+            data['account_info']['account_id'] = f"SCHWAB-{account_number}"
+            data['account_info']['account_holder'] = account_holder
+        else:
+            # Fallback to filename-based account identification
+            if '_088' in file_path.name:
+                data['account_info']['account_id'] = 'SCHWAB-9740-7088'
+            elif '_563' in file_path.name:
+                data['account_info']['account_id'] = 'SCHWAB-2530-2563'
+            else:
+                data['account_info']['account_id'] = 'SCHWAB-UNKNOWN'
+            data['account_info']['account_holder'] = 'YUAN JUNG CHENG'
+        
+        data['account_info']['institution'] = 'Charles Schwab'
+        data['account_info']['account_type'] = 'Schwab One International'
+        data['account_info']['broker'] = 'SCHWAB'
         
         # Extract statement period
-        period_match = re.search(r'Statement Period:\s*([A-Za-z]+\s+\d+,\s+\d{4})\s+to\s+([A-Za-z]+\s+\d+,\s+\d{4})', text)
+        period_match = re.search(r'Statement Period\s*([A-Za-z]+\s+\d+[-]\d+,\s+\d{4})', text)
         if period_match:
-            data['account_info']['start_date'] = period_match.group(1)
-            data['account_info']['end_date'] = period_match.group(2)
-            data['account_info']['statement_date'] = period_match.group(2)
+            period_str = period_match.group(1)
+            # Extract end date as statement date
+            end_date_match = re.search(r'([A-Za-z]+\s+\d+),\s+(\d{4})$', period_str)
+            if end_date_match:
+                month_day = end_date_match.group(1)
+                year = end_date_match.group(2)
+                try:
+                    # Convert to standard format
+                    date_obj = datetime.strptime(f"{month_day}, {year}", '%B %d, %Y')
+                    data['account_info']['statement_date'] = date_obj.strftime('%Y-%m-%d')
+                except:
+                    # Fallback to filename date
+                    date_match = re.search(r'(\d{4}-\d{2}-\d{2})', file_path.name)
+                    if date_match:
+                        data['account_info']['statement_date'] = date_match.group(1)
         
-        # Extract account value summary
-        value_section = re.search(r'Account Value Summary(.*?)(?:Change in Account Value|Transactions & Fees)', text, re.DOTALL)
-        if value_section:
-            values_text = value_section.group(1)
+        # Extract account balances from Account Summary section
+        summary_section = re.search(r'Account Summary(.*?)(?:Transaction Details|Manage Your Account)', text, re.DOTALL)
+        if summary_section:
+            summary_text = summary_section.group(1)
             
-            # Parse cash balance
-            cash_match = re.search(r'Cash & Sweep Money Market Funds[^\$]*\$\s*([\d,]+\.?\d*)', values_text)
-            if cash_match:
-                data['balances']['cash_balance'] = float(cash_match.group(1).replace(',', ''))
+            # Extract ending account value
+            ending_match = re.search(r'Ending Account Value.*?\$([0-9,]+\.?\d*)', summary_text)
+            if ending_match:
+                data['balances']['total_account_value'] = float(ending_match.group(1).replace(',', ''))
             
-            # Parse total investments
-            investments_match = re.search(r'Total Investments Long[^\$]*\$\s*([\d,]+\.?\d*)', values_text)
-            if investments_match:
-                data['balances']['total_investments'] = float(investments_match.group(1).replace(',', ''))
+            # Extract beginning account value  
+            beginning_match = re.search(r'Beginning Account Value.*?\$([0-9,]+\.?\d*)', summary_text)
+            if beginning_match:
+                data['balances']['beginning_account_value'] = float(beginning_match.group(1).replace(',', ''))
             
-            # Parse total account value
-            total_match = re.search(r'Total Account Value[^\$]*\$\s*([\d,]+\.?\d*)', values_text)
-            if total_match:
-                data['balances']['total_account_value'] = float(total_match.group(1).replace(',', ''))
+            # Extract deposits, withdrawals, etc.
+            deposits_match = re.search(r'Deposits\s*([0-9,]+\.?\d*)', summary_text)
+            if deposits_match:
+                data['balances']['deposits'] = float(deposits_match.group(1).replace(',', ''))
+            
+            withdrawals_match = re.search(r'Withdrawals\s*\(([0-9,]+\.?\d*)\)', summary_text)
+            if withdrawals_match:
+                data['balances']['withdrawals'] = -float(withdrawals_match.group(1).replace(',', ''))
         
-        # Extract positions section
-        positions_section = re.search(r'Holdings Detail - Long Positions(.*?)(?:Transactions & Fees|Page \d+)', text, re.DOTALL)
-        if positions_section:
-            positions_text = positions_section.group(1)
-            # Parse individual positions (this would need more detailed parsing based on actual format)
-            data['positions'] = self.parse_schwab_positions(positions_text)
-        
-        # Extract transactions section - look for Transaction Detail
-        transactions_section = re.search(r'Transaction Detail(.*?)(?:Terms and Conditions|Page \d+)', text, re.DOTALL)
-        if transactions_section:
-            transactions_text = transactions_section.group(1)
-            data['transactions'] = self.parse_schwab_transactions(transactions_text)
-        else:
-            # Fallback: look for any transaction patterns in the text
-            data['transactions'] = self.parse_schwab_transactions(text)
+        # Parse transactions - new Schwab format
+        data['transactions'] = self.parse_modern_schwab_transactions(text, file_path)
         
         return data
     
-    def parse_schwab_positions(self, positions_text: str) -> List[Dict]:
-        """Parse positions from Schwab holdings section"""
-        positions = []
-        # Schwab positions appear to be in Investment Detail section
-        # This is a simplified parser - positions might not be present in all statements
-        return positions
-    
-    def parse_schwab_transactions(self, transactions_text: str) -> List[Dict]:
-        """Parse transactions from Schwab Transaction Detail section"""
+    def parse_modern_schwab_transactions(self, text: str, file_path: Path) -> List[Dict]:
+        """Parse transactions from modern Schwab Transaction Details section"""
         transactions = []
         
-        # Look for Transaction Detail section
-        lines = transactions_text.split('\n')
-        current_year = "2022"  # Default year, will try to extract from statement
+        # Find Transaction Details section
+        trans_section = re.search(r'Transaction Details(.*?)(?:Total Transactions|Page \d+|$)', text, re.DOTALL)
+        if not trans_section:
+            return transactions
         
-        # Try to extract year from the statement text
-        year_match = re.search(r'Statement Period:.*(\d{4})', transactions_text)
+        trans_text = trans_section.group(1)
+        lines = trans_text.split('\n')
+        
+        # Extract year from statement period in text
+        current_year = "2025"  # Default fallback
+        year_match = re.search(r'Statement Period.*(\d{4})', text)
         if year_match:
             current_year = year_match.group(1)
+        else:
+            # Fallback: extract year from filename
+            filename = file_path.name if hasattr(file_path, 'name') else str(file_path)
+            filename_year_match = re.search(r'(\d{4})', filename)
+            if filename_year_match:
+                current_year = filename_year_match.group(1)
+        
+        # Detect transaction format by looking at the structure
+        has_symbol_column = bool(re.search(r'Symbol/', trans_text) and re.search(r'CUSIP', trans_text))
+        
+        if has_symbol_column:
+            # Complex format with detailed stock transactions
+            return self.parse_schwab_detailed_transactions(trans_text, current_year)
+        else:
+            # Simple format with basic transactions
+            return self.parse_schwab_simple_transactions(trans_text, current_year)
+    
+    def parse_schwab_simple_transactions(self, trans_text: str, current_year: str) -> List[Dict]:
+        """Parse simple Schwab transaction format (like 563 account)"""
+        transactions = []
+        lines = trans_text.split('\n')
         
         i = 0
+        current_date = None  # Track the current transaction date
+        
         while i < len(lines):
             line = lines[i].strip()
             
             # Skip empty lines and headers
-            if not line or 'Settle' in line or 'Date' in line or 'Transaction' in line:
+            if not line or 'Date' in line or 'Category' in line or 'Total Transactions' in line:
                 i += 1
                 continue
             
-            # Look for date patterns MM/DD MM/DD (Settle Date, Trade Date)
-            date_match = re.search(r'^(\d{1,2}/\d{1,2})\s+(\d{1,2}/\d{1,2})\s+(.+)', line)
+            # Look for date pattern: MM/DD at start of line
+            date_match = re.match(r'^(\d{1,2}/\d{1,2})\s+(.+)', line)
             if date_match:
-                settle_date = date_match.group(1)
-                trade_date = date_match.group(2)
-                rest_of_line = date_match.group(3)
+                date_str = date_match.group(1)
+                rest_of_line = date_match.group(2).strip()
                 
-                # Format dates as YYYY-MM-DD
-                settle_parts = settle_date.split('/')
-                trade_parts = trade_date.split('/')
-                settle_formatted = f"{current_year}-{settle_parts[0].zfill(2)}-{settle_parts[1].zfill(2)}"
-                trade_formatted = f"{current_year}-{trade_parts[0].zfill(2)}-{trade_parts[1].zfill(2)}"
-                
-                # Parse transaction details
-                transaction = {
-                    'transaction_date': trade_formatted,
-                    'settle_date': settle_formatted,
-                    'transaction_type': 'OTHER',
-                    'description': rest_of_line,
-                    'symbol': '',
-                    'quantity': 0,
-                    'price': 0,
-                    'amount': 0
-                }
-                
-                # Identify transaction type
-                line_lower = rest_of_line.lower()
-                desc_lower = rest_of_line.lower()
-                
-                if 'dividend' in line_lower:
-                    transaction['transaction_type'] = 'DIVIDEND'
-                elif ('funds received' in desc_lower or 
-                      'wired funds received' in desc_lower):
-                    transaction['transaction_type'] = 'DEPOSIT'
-                elif 'nra tax' in desc_lower or 'nra' in line_lower:
-                    transaction['transaction_type'] = 'TAX'
-                elif ('credit interest' in desc_lower or 
-                      ('int' in desc_lower and 'interest' in desc_lower) or
-                      ('schwab1 int' in desc_lower)):
-                    transaction['transaction_type'] = 'INTEREST'
-                elif 'debit' in line_lower:
-                    if 'amex' in line_lower:
-                        transaction['transaction_type'] = 'AMEX_DEBIT'
-                    elif 'capital one' in line_lower:
-                        transaction['transaction_type'] = 'C1_DEBIT'
-                    elif 'td ameritrade' in line_lower:
-                        transaction['transaction_type'] = 'TRANSFER_DEBIT'
-                    else:
-                        transaction['transaction_type'] = 'DEBIT'
-                elif 'credit' in line_lower:
-                    transaction['transaction_type'] = 'CREDIT'
-                elif 'auto' in line_lower and 'debit' in line_lower:
-                    transaction['transaction_type'] = 'AUTO_DEBIT'
-                elif 'redeemed' in line_lower:
-                    transaction['transaction_type'] = 'REDEMPTION'
-                elif 'purchased' in line_lower or 'buy' in line_lower:
-                    transaction['transaction_type'] = 'BUY'
-                elif 'sold' in line_lower or 'sell' in line_lower:
-                    transaction['transaction_type'] = 'SELL'
-                else:
-                    transaction['transaction_type'] = 'OTHER'
-                
-                # Extract amounts - look for patterns like (95.00) or 95.00
-                amount_matches = re.findall(r'\(?([\d,]+\.?\d*)\)?', rest_of_line)
-                if amount_matches:
+                # Format date as YYYY-MM-DD
+                date_parts = date_str.split('/')
+                if len(date_parts) == 2:
+                    month, day = date_parts
+                    current_date = f"{current_year}-{month.zfill(2)}-{day.zfill(2)}"
+                    
+                    # Validation: Check if the date is in the future (beyond today)
+                    from datetime import datetime
                     try:
-                        amount_str = amount_matches[-1].replace(',', '')  # Take the last number as amount
-                        transaction['amount'] = float(amount_str)
-                        # Check if amount should be negative
-                        if '(' in rest_of_line or 'debit' in line_lower:
-                            transaction['amount'] = -abs(transaction['amount'])
-                    except (ValueError, IndexError):
+                        parsed_date = datetime.strptime(current_date, '%Y-%m-%d')
+                        today = datetime.now()
+                        if parsed_date > today:
+                            prev_year = str(int(current_year) - 1)
+                            current_date = f"{prev_year}-{month.zfill(2)}-{day.zfill(2)}"
+                    except ValueError:
                         pass
+                else:
+                    current_date = f"{current_year}-01-01"
                 
-                # Look for symbol in the description or following lines
-                symbol_match = re.search(r'\b([A-Z]{3,5})\b', rest_of_line)
-                if symbol_match:
-                    potential_symbol = symbol_match.group(1)
-                    # Filter out common non-symbol words
-                    if potential_symbol not in ['AUTO', 'DEBIT', 'AMEX', 'USD', 'FUND', 'SCH', 'LIQ']:
-                        transaction['symbol'] = potential_symbol
+                # Parse the transaction
+                transaction = self.parse_simple_transaction_line(rest_of_line, current_date)
+                if transaction:
+                    transactions.append(transaction)
                 
-                # Look ahead for additional transaction details on next lines
-                j = i + 1
-                while j < len(lines) and j < i + 3:  # Check next few lines
-                    next_line = lines[j].strip()
-                    if not next_line:
-                        j += 1
-                        continue
-                    
-                    # Stop if we hit another date line
-                    if re.match(r'^\d{1,2}/\d{1,2}\s+\d{1,2}/\d{1,2}', next_line):
-                        break
-                    
-                    # Look for symbol/description on continuation lines
-                    if not transaction['symbol']:
-                        symbol_match = re.search(r'\b([A-Z]{3,5})\b', next_line)
-                        if symbol_match:
-                            potential_symbol = symbol_match.group(1)
-                            if potential_symbol not in ['AUTO', 'DEBIT', 'AMEX', 'USD', 'FUND', 'SCH', 'LIQ']:
-                                transaction['symbol'] = potential_symbol
-                    
-                    # Look for quantity and price in format: Quantity Price Total
-                    qty_price_match = re.search(r'(\d+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)', next_line)
-                    if qty_price_match:
-                        try:
-                            transaction['quantity'] = float(qty_price_match.group(1).replace(',', ''))
-                            transaction['price'] = float(qty_price_match.group(2).replace(',', ''))
-                            total_amount = float(qty_price_match.group(3).replace(',', ''))
-                            if transaction['amount'] == 0:
-                                transaction['amount'] = total_amount
-                        except ValueError:
-                            pass
-                    
-                    j += 1
+                i += 1
                 
-                transactions.append(transaction)
-                i = j  # Continue from where we left off
+            elif current_date and line.strip():
+                # This is a continuation line without a date - use the current date
+                # Look for transaction type indicators at the start
+                if any(indicator in line for indicator in ['Deposit', 'Interest', 'Withdrawal', 'Dividend']):
+                    transaction = self.parse_simple_transaction_line(line.strip(), current_date)
+                    if transaction:
+                        transactions.append(transaction)
+                i += 1
             else:
                 i += 1
         
         return transactions
+    
+    def parse_simple_transaction_line(self, line: str, transaction_date: str) -> Dict:
+        """Parse a single transaction line from simple Schwab format"""
+        transaction = {
+            'transaction_date': transaction_date,
+            'transaction_type': 'OTHER',
+            'description': line,
+            'symbol': '',
+            'quantity': 0,
+            'price': 0,
+            'amount': 0,
+            'fee': 0,
+            'tax': 0,
+            'realized_gain_loss': 0
+        }
+        
+        # Identify transaction type
+        if 'Withdrawal' in line:
+            transaction['transaction_type'] = 'WITHDRAWAL'
+        elif 'Deposit' in line:
+            transaction['transaction_type'] = 'DEPOSIT'
+        elif 'Interest' in line and 'Credit Interest' in line:
+            transaction['transaction_type'] = 'INTEREST'
+        elif 'Interest' in line and 'NRA Tax' in line:
+            transaction['transaction_type'] = 'TAX'
+        elif 'Dividend' in line:
+            transaction['transaction_type'] = 'DIVIDEND'
+        
+        # Extract amount from the line - look for patterns like (1,690.79) or 6,000.00
+        amount_match = re.search(r'\(([\d,]+\.?\d*)\)', line)
+        if amount_match:
+            # Amount in parentheses - negative
+            extracted_amount = -float(amount_match.group(1).replace(',', ''))
+        else:
+            # Look for positive amount at the end
+            amount_match = re.search(r'([\d,]+\.?\d*)$', line)
+            if amount_match:
+                extracted_amount = float(amount_match.group(1).replace(',', ''))
+            else:
+                extracted_amount = 0
+        
+        # For TAX transactions, put the amount in the tax field, not amount field
+        if transaction['transaction_type'] == 'TAX':
+            transaction['tax'] = abs(extracted_amount)  # Tax should be positive
+            transaction['amount'] = 0
+        else:
+            transaction['amount'] = extracted_amount
+        
+        # Standardize the amount based on transaction type
+        if extracted_amount != 0:
+            self.standardize_transaction_amount(transaction)
+        
+        # Only return transaction if we found meaningful data
+        return transaction if (extracted_amount != 0) else None
+    
+    def parse_schwab_detailed_transactions(self, trans_text: str, current_year: str) -> List[Dict]:
+        """Parse detailed Schwab transaction format with stocks (like 088 account)"""
+        transactions = []
+        lines = trans_text.split('\n')
+        
+        i = 0
+        current_date = None
+        
+        while i < len(lines):
+            line = lines[i].strip()
+            
+            # Skip empty lines, headers, and fee lines
+            if (not line or 'Date' in line or 'Category' in line or 'Symbol' in line or 
+                'Total Transactions' in line or 'Industry Fee' in line):
+                i += 1
+                continue
+            
+            # Look for date pattern: MM/DD at start of line
+            date_match = re.match(r'^(\d{1,2}/\d{1,2})\s+(.+)', line)
+            if date_match:
+                date_str = date_match.group(1)
+                rest_of_line = date_match.group(2).strip()
+                
+                # Format date as YYYY-MM-DD
+                date_parts = date_str.split('/')
+                if len(date_parts) == 2:
+                    month, day = date_parts
+                    current_date = f"{current_year}-{month.zfill(2)}-{day.zfill(2)}"
+                    
+                    # Validation: Check if the date is in the future
+                    from datetime import datetime
+                    try:
+                        parsed_date = datetime.strptime(current_date, '%Y-%m-%d')
+                        today = datetime.now()
+                        if parsed_date > today:
+                            prev_year = str(int(current_year) - 1)
+                            current_date = f"{prev_year}-{month.zfill(2)}-{day.zfill(2)}"
+                    except ValueError:
+                        pass
+                else:
+                    current_date = f"{current_year}-01-01"
+                
+                # Parse detailed transaction line
+                transaction = self.parse_detailed_transaction_line(rest_of_line, current_date)
+                if transaction:
+                    transactions.append(transaction)
+                
+                i += 1
+                
+            elif current_date and line.strip():
+                # This might be a continuation line without a date - use the current date
+                # Skip lines that are just industry fees or other non-transaction info
+                if not any(skip_word in line for skip_word in ['Industry Fee', 'JUNG CHE']):
+                    # Check if this looks like a transaction line (has category/action)
+                    if any(indicator in line for indicator in ['Sale', 'Purchase', 'Buy', 'Withdrawal', 'Deposit', 'Interest', 'Dividend']):
+                        transaction = self.parse_detailed_transaction_line(line.strip(), current_date)
+                        if transaction:
+                            transactions.append(transaction)
+                i += 1
+            else:
+                i += 1
+        
+        return transactions
+    
+    def parse_detailed_transaction_line(self, line: str, transaction_date: str) -> Dict:
+        """Parse a single detailed transaction line from Schwab format"""
+        transaction = {
+            'transaction_date': transaction_date,
+            'transaction_type': 'OTHER',
+            'description': line,
+            'symbol': '',
+            'quantity': 0,
+            'price': 0,
+            'amount': 0,
+            'fee': 0,
+            'tax': 0,
+            'realized_gain_loss': 0
+        }
+        
+        # Identify transaction type
+        if 'Sale' in line:
+            transaction['transaction_type'] = 'SELL'
+        elif 'Purchase' in line or 'Buy' in line:
+            transaction['transaction_type'] = 'BUY'
+        elif 'Withdrawal' in line:
+            transaction['transaction_type'] = 'WITHDRAWAL'
+        elif 'Deposit' in line:
+            transaction['transaction_type'] = 'DEPOSIT'
+        elif 'Interest' in line and 'Credit Interest' in line:
+            transaction['transaction_type'] = 'INTEREST'
+        elif 'Interest' in line and 'NRA Tax' in line:
+            transaction['transaction_type'] = 'TAX'
+        elif 'Dividend' in line:
+            transaction['transaction_type'] = 'DIVIDEND'
+        
+        # For stock transactions, parse the structured format
+        if transaction['transaction_type'] in ['SELL', 'BUY']:
+            # Extract symbol (3-5 uppercase letters)
+            symbol_match = re.search(r'\b([A-Z]{3,5})\b', line)
+            if symbol_match:
+                potential_symbol = symbol_match.group(1)
+                # Filter out common non-symbol words
+                if potential_symbol not in ['CORP', 'INC', 'LLC', 'CLASS', 'FUND', 'SCHWAB', 'BANK', 'TFRD', 'JUNG', 'AMEX']:
+                    transaction['symbol'] = potential_symbol
+            
+            # Extract company name (between symbol and quantity)
+            if transaction['symbol']:
+                # Look for company name pattern after symbol
+                company_match = re.search(rf"{re.escape(transaction['symbol'])}\s+([A-Z\s&,]+?)(?:\s+\(|\s+A\s+)?\s*\(", line)
+                if company_match:
+                    transaction['description'] = f"{transaction['symbol']} {company_match.group(1).strip()}"
+                else:
+                    # Fallback: look for company name patterns
+                    company_match = re.search(r"([A-Z][A-Z\s&,]+?(?:CORP|INC|CLASS))", line)
+                    if company_match:
+                        transaction['description'] = f"{transaction['symbol']} {company_match.group(1).strip()}"
+            
+            # Parse numeric values: (quantity) price fee amount gain/loss
+            # Example: "(45.0000) 536.6201 0.01 24,147.89 13,122.89,(LT)"
+            numeric_match = re.search(r'\((\d+\.?\d*)\)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)', line)
+            if numeric_match:
+                try:
+                    transaction['quantity'] = float(numeric_match.group(1).replace(',', ''))
+                    transaction['price'] = float(numeric_match.group(2).replace(',', ''))
+                    transaction['fee'] = float(numeric_match.group(3).replace(',', ''))
+                    transaction['amount'] = float(numeric_match.group(4).replace(',', ''))
+                    
+                    # Extract realized gain/loss (may have ,LT or ,ST suffix)
+                    gain_loss_str = numeric_match.group(5).replace(',', '')
+                    gain_loss_match = re.search(r'(\d+\.?\d*)', gain_loss_str)
+                    if gain_loss_match:
+                        transaction['realized_gain_loss'] = float(gain_loss_match.group(1))
+                    
+                    # Set quantity sign based on transaction type
+                    if transaction['transaction_type'] == 'SELL':
+                        transaction['quantity'] = -abs(transaction['quantity'])
+                    elif transaction['transaction_type'] == 'BUY':
+                        transaction['quantity'] = abs(transaction['quantity'])
+                    
+                    # Use standardized amount handling
+                    self.standardize_transaction_amount(transaction)
+                    
+                except (ValueError, IndexError) as e:
+                    # If parsing fails, still return the transaction but with zero values
+                    pass
+        
+        else:
+            # For non-stock transactions, look for simple amounts
+            # Look for amounts in parentheses (negative) first
+            amount_match = re.search(r'\(([\d,]+\.?\d*)\)', line)
+            if amount_match:
+                extracted_amount = -float(amount_match.group(1).replace(',', ''))
+            else:
+                # Look for positive amount at the end
+                amount_match = re.search(r'([\d,]+\.?\d*)$', line)
+                if amount_match:
+                    extracted_amount = float(amount_match.group(1).replace(',', ''))
+                else:
+                    extracted_amount = 0
+            
+            # For TAX transactions, put the amount in the tax field, not amount field
+            if transaction['transaction_type'] == 'TAX':
+                transaction['tax'] = abs(extracted_amount)  # Tax should be positive
+                transaction['amount'] = 0
+            else:
+                transaction['amount'] = extracted_amount
+        
+        # Only return transaction if we found meaningful data (amount, symbol, or tax)
+        return transaction if (transaction['amount'] != 0 or transaction['symbol'] or transaction['tax'] != 0) else None
     
     def parse_tda_statement(self, text: str, file_path: Path) -> Dict:
         """Parse TD Ameritrade statement data"""
@@ -588,17 +805,14 @@ class MultiBrokerPortfolioParser:
                         elif transaction_amounts:
                             transaction['amount'] = transaction_amounts[0]
                         
-                        # Determine if amount should be negative based on transaction type
-                        if transaction['transaction_type'] == 'BUY':
-                            transaction['amount'] = -abs(transaction['amount'])
-                        elif transaction['transaction_type'] in ['DIVIDEND', 'SELL']:
-                            transaction['amount'] = abs(transaction['amount'])
-                        
-                        # Look for negative amounts in parentheses
+                        # Look for negative amounts in parentheses first
                         if '(' in line and ')' in line:
                             paren_match = re.search(r'\((\d+\.?\d*)\)', line)
                             if paren_match:
-                                transaction['amount'] = -float(paren_match.group(1))
+                                transaction['amount'] = float(paren_match.group(1))  # Get absolute value, let standardization handle sign
+                        
+                        # Use standardized amount handling
+                        self.standardize_transaction_amount(transaction)
                     
                     except (ValueError, IndexError):
                         pass
@@ -693,6 +907,9 @@ class MultiBrokerPortfolioParser:
                         'net_amount': net_amount,
                         'order_id': order_id
                     }
+                    
+                    # Apply standardized amount handling
+                    self.standardize_transaction_amount(transaction)
                     
                     data['transactions'].append(transaction)
                     
