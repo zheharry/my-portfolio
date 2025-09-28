@@ -55,7 +55,7 @@ The parser uses generic placeholders for sensitive information by default and wo
 To analyze all broker statements (PDF and CSV files) in the `Statements/` directory:
 
 ```bash
-python -c "
+.venv/bin/python -c "
 from scripts.multi_broker_parser import MultiBrokerPortfolioParser
 parser = MultiBrokerPortfolioParser()
 parser.process_all_statements()
