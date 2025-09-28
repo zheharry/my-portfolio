@@ -667,7 +667,8 @@ class MultiBrokerPortfolioParser:
                     net_amount_str = str(row.get('淨收付金額', '0')).replace(',', '').replace('"', '')
                     net_amount = float(net_amount_str) if net_amount_str and net_amount_str != 'nan' else 0
                     
-                    transaction_type = '買進' if '現買' in str(row.get('買賣別', '')) else '賣出'
+                    # Standardize to English transaction types for consistency across all brokers
+                    transaction_type = 'BUY' if '現買' in str(row.get('買賣別', '')) else 'SELL'
                     price = float(str(row.get('成交價', '0')).replace(',', '')) if row.get('成交價') else 0
                     cost = float(str(row.get('成本', '0')).replace(',', '')) if row.get('成本') else 0
                     fee = float(str(row.get('手續費', '0')).replace(',', '')) if pd.notna(row.get('手續費')) else 0

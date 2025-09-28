@@ -219,13 +219,22 @@ class PortfolioDashboard {
 
         this.transactions.forEach(transaction => {
             const row = document.createElement('tr');
-            const typeClass = transaction.transaction_type === '買進' ? 'transaction-type-buy' : 'transaction-type-sell';
+            const typeClass = transaction.transaction_type === 'BUY' ? 'transaction-type-buy' : 'transaction-type-sell';
             row.className = typeClass;
+
+            // Map transaction types to display labels while using English values internally  
+            const getTransactionTypeDisplay = (type) => {
+                switch(type) {
+                    case 'BUY': return '買進 (Buy)';
+                    case 'SELL': return '賣出 (Sell)';
+                    default: return type;
+                }
+            };
 
             row.innerHTML = `
                 <td>${this.formatDate(transaction.transaction_date)}</td>
                 <td><strong>${transaction.symbol || '-'}</strong></td>
-                <td><span class="badge ${transaction.transaction_type === '買進' ? 'bg-success' : 'bg-success'}">${transaction.transaction_type}</span></td>
+                <td><span class="badge ${transaction.transaction_type === 'BUY' ? 'bg-success' : 'bg-success'}">${getTransactionTypeDisplay(transaction.transaction_type)}</span></td>
                 <td>${this.formatNumber(transaction.quantity)}</td>
                 <td>$${this.formatNumber(transaction.price)}</td>
                 <td>$${this.formatNumber(Math.abs(transaction.amount))}</td>
@@ -391,8 +400,8 @@ class PortfolioDashboard {
             this.distributionChart.destroy();
         }
 
-        const buyTransactions = this.transactions.filter(t => t.transaction_type === '買進').length;
-        const sellTransactions = this.transactions.filter(t => t.transaction_type === '賣出').length;
+        const buyTransactions = this.transactions.filter(t => t.transaction_type === 'BUY').length;
+        const sellTransactions = this.transactions.filter(t => t.transaction_type === 'SELL').length;
 
         this.distributionChart = new Chart(ctx, {
             type: 'doughnut',

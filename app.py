@@ -214,8 +214,8 @@ class PortfolioAPI:
         """Get enhanced portfolio summary with fees"""
         query = """
             SELECT 
-                SUM(CASE WHEN transaction_type = '賣出' THEN net_amount ELSE 0 END) as total_sales,
-                SUM(CASE WHEN transaction_type = '買進' THEN ABS(net_amount) ELSE 0 END) as total_purchases,
+                SUM(CASE WHEN transaction_type = 'SELL' THEN net_amount ELSE 0 END) as total_sales,
+                SUM(CASE WHEN transaction_type = 'BUY' THEN ABS(net_amount) ELSE 0 END) as total_purchases,
                 SUM(CASE WHEN transaction_type = 'DIVIDEND' THEN net_amount ELSE 0 END) as total_dividends,
                 SUM(fee) as total_fees,
                 SUM(tax) as total_taxes,
@@ -260,8 +260,8 @@ class PortfolioAPI:
         query = """
             SELECT 
                 strftime('%Y', transaction_date) as year,
-                SUM(CASE WHEN transaction_type = '買進' THEN ABS(net_amount) ELSE 0 END) as purchases,
-                SUM(CASE WHEN transaction_type = '賣出' THEN net_amount ELSE 0 END) as sales,
+                SUM(CASE WHEN transaction_type = 'BUY' THEN ABS(net_amount) ELSE 0 END) as purchases,
+                SUM(CASE WHEN transaction_type = 'SELL' THEN net_amount ELSE 0 END) as sales,
                 SUM(CASE WHEN transaction_type = 'DIVIDEND' THEN net_amount ELSE 0 END) as dividends,
                 SUM(fee) as fees,
                 SUM(tax) as taxes,
