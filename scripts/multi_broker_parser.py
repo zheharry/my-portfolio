@@ -711,6 +711,9 @@ class MultiBrokerPortfolioParser:
             else:
                 transaction['amount'] = extracted_amount
         
+        # Always calculate net_amount for all transactions
+        self.calculate_net_amount(transaction)
+        
         # Only return transaction if we found meaningful data (amount, symbol, or tax)
         return transaction if (transaction['amount'] != 0 or transaction['symbol'] or transaction['tax'] != 0) else None
     
@@ -854,7 +857,10 @@ class MultiBrokerPortfolioParser:
                     'symbol': '',
                     'quantity': 0,
                     'price': 0,
-                    'amount': 0
+                    'amount': 0,
+                    'fee': 0,
+                    'tax': 0,
+                    'realized_gain_loss': 0
                 }
                 
                 # Parse transaction type
@@ -1218,6 +1224,44 @@ class MultiBrokerPortfolioParser:
             
             return False
     
+    def update_missing_net_amounts(self):
+        """Update existing transactions that are missing net_amount values"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Find transactions without net_amount
+                cursor.execute("""
+                    SELECT id, amount, fee, tax 
+                    FROM transactions 
+                    WHERE net_amount IS NULL OR net_amount = 0
+                """)
+                
+                transactions_to_update = cursor.fetchall()
+                
+                if not transactions_to_update:
+                    self.logger.info("All transactions already have net_amount calculated")
+                    return
+                
+                self.logger.info(f"Found {len(transactions_to_update)} transactions missing net_amount")
+                
+                # Update each transaction
+                for transaction_id, amount, fee, tax in transactions_to_update:
+                    # Calculate net_amount using the same logic
+                    net_amount = (amount or 0) - abs(fee or 0) - abs(tax or 0)
+                    
+                    cursor.execute("""
+                        UPDATE transactions 
+                        SET net_amount = ? 
+                        WHERE id = ?
+                    """, (net_amount, transaction_id))
+                
+                conn.commit()
+                self.logger.info(f"Updated net_amount for {len(transactions_to_update)} transactions")
+                
+        except Exception as e:
+            self.logger.error(f"Error updating missing net_amounts: {e}")
+
     def process_all_statements(self):
         """Process all PDF and CSV statements"""
         if not self.statements_dir.exists():
@@ -1251,6 +1295,9 @@ class MultiBrokerPortfolioParser:
         
         # Generate summary report
         self.generate_processing_report()
+        
+        # Update any existing transactions that might be missing net_amount values
+        self.update_missing_net_amounts()
     
     def generate_processing_report(self):
         """Generate a summary report of processing results"""
