@@ -3,6 +3,9 @@ import sqlite3
 import json
 import pandas as pd
 import os
+import requests
+import re
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from scripts.multi_broker_parser import MultiBrokerPortfolioParser
@@ -13,6 +16,9 @@ class PortfolioAPI:
     def __init__(self, db_path="data/database/portfolio.db"):
         self.db_path = db_path
         self.ensure_database_exists()
+        # Exchange rate cache to avoid excessive API calls
+        self._exchange_rate_cache = {}
+        self._cache_duration = 600  # 10 minutes
     
     def ensure_database_exists(self):
         """Create database and tables if they don't exist"""
@@ -226,15 +232,139 @@ class PortfolioAPI:
             cursor.execute("SELECT DISTINCT currency FROM transactions WHERE currency IS NOT NULL ORDER BY currency")
             return [row[0] for row in cursor.fetchall()]
     
+    def _get_latest_usd_ntd_rate(self):
+        """Fetch the latest USD to NTD exchange rate from web search"""
+        cache_key = 'usd_ntd_rate'
+        current_time = time.time()
+        
+        # Check cache first
+        if (cache_key in self._exchange_rate_cache and 
+            current_time - self._exchange_rate_cache[cache_key]['timestamp'] < self._cache_duration):
+            return self._exchange_rate_cache[cache_key]['rate']
+        
+        try:
+            # Try multiple sources for reliability
+            rate = (self._fetch_rate_from_fixer() or 
+                   self._fetch_rate_from_google() or 
+                   self._fetch_rate_from_exchangerate_api() or 
+                   32.0)
+            
+            # Cache the result
+            self._exchange_rate_cache[cache_key] = {
+                'rate': rate,
+                'timestamp': current_time
+            }
+            
+            print(f"Updated USD to NTD exchange rate: {rate}")
+            return rate
+            
+        except Exception as e:
+            print(f"Warning: Could not fetch exchange rate: {e}")
+            # Return cached rate if available, otherwise use fallback
+            if cache_key in self._exchange_rate_cache:
+                print(f"Using cached exchange rate: {self._exchange_rate_cache[cache_key]['rate']}")
+                return self._exchange_rate_cache[cache_key]['rate']
+            print("Using fallback exchange rate: 32.0")
+            return 32.0  # Fallback rate
+    
+    def _fetch_rate_from_fixer(self):
+        """Fetch exchange rate from Fixer.io free API"""
+        try:
+            # Using the free tier endpoint (no API key required for latest rates)
+            url = "http://data.fixer.io/api/latest"
+            params = {
+                'access_key': 'free',  # Some endpoints work without key
+                'base': 'USD',
+                'symbols': 'TWD'
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if 'rates' in data and 'TWD' in data['rates']:
+                    return float(data['rates']['TWD'])
+                    
+        except Exception as e:
+            print(f"Fixer.io rate fetch failed: {e}")
+        
+        return None
+    
+    def _fetch_rate_from_exchangerate_api(self):
+        """Fetch exchange rate from ExchangeRate-API (free tier)"""
+        try:
+            url = "https://api.exchangerate-api.com/v4/latest/USD"
+            
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if 'rates' in data and 'TWD' in data['rates']:
+                    return float(data['rates']['TWD'])
+                    
+        except Exception as e:
+            print(f"ExchangeRate-API rate fetch failed: {e}")
+        
+        return None
+    
+    def _fetch_rate_from_google(self):
+        """Fetch exchange rate from Google search"""
+        try:
+            url = "https://www.google.com/search?q=usd+to+ntd"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            # Look for the exchange rate pattern in Google's response
+            # Google typically shows: "1 United States Dollar equals X.XX Taiwan Dollar"
+            pattern = r'1 United States Dollar equals ([\d,\.]+) Taiwan Dollar'
+            match = re.search(pattern, response.text)
+            
+            if match:
+                rate_str = match.group(1).replace(',', '')
+                return float(rate_str)
+                
+            # Alternative pattern for different Google layouts
+            pattern = r'"(\d+\.\d+)","TWD"'
+            match = re.search(pattern, response.text)
+            if match:
+                return float(match.group(1))
+                
+        except Exception as e:
+            print(f"Google rate fetch failed: {e}")
+        
+        return None
+    
+    def _fetch_rate_from_xe(self):
+        """Fetch exchange rate from XE.com API-like endpoint"""
+        try:
+            url = "https://api.xe.com/v1/convert_from.json/"
+            params = {
+                'from': 'USD',
+                'to': 'TWD',
+                'amount': 1
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if 'to' in data and len(data['to']) > 0:
+                    return float(data['to'][0]['mid'])
+                    
+        except Exception as e:
+            print(f"XE rate fetch failed: {e}")
+        
+        return None
+    
     def convert_to_ntd(self, amount, from_currency):
-        """Convert amount to NTD using fixed exchange rate"""
+        """Convert amount to NTD using latest web-based exchange rate"""
         if amount is None:
             return 0
         
-        # Fixed exchange rate USD to NTD (you can make this configurable later)
-        usd_to_ntd_rate = 32.0  # Approximate rate
-        
         if from_currency == 'USD':
+            # Get the latest USD to NTD exchange rate from web search
+            usd_to_ntd_rate = self._get_latest_usd_ntd_rate()
             return amount * usd_to_ntd_rate
         elif from_currency == 'NTD':
             return amount
@@ -754,6 +884,39 @@ def api_data_freshness_report():
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+@app.route('/api/exchange-rate')
+def api_exchange_rate():
+    """Get current USD to NTD exchange rate"""
+    try:
+        # Get the current rate (will use cache if recent)
+        rate = portfolio_api._get_latest_usd_ntd_rate()
+        
+        # Check if rate is from cache
+        cache_key = 'usd_ntd_rate'
+        is_cached = (cache_key in portfolio_api._exchange_rate_cache and 
+                    time.time() - portfolio_api._exchange_rate_cache[cache_key]['timestamp'] < portfolio_api._cache_duration)
+        
+        cache_age = 0
+        if cache_key in portfolio_api._exchange_rate_cache:
+            cache_age = time.time() - portfolio_api._exchange_rate_cache[cache_key]['timestamp']
+        
+        return jsonify({
+            'success': True,
+            'rate': rate,
+            'currency_pair': 'USD/TWD',
+            'cached': is_cached,
+            'cache_age_seconds': int(cache_age),
+            'last_updated': datetime.fromtimestamp(
+                portfolio_api._exchange_rate_cache[cache_key]['timestamp']
+            ).isoformat() if cache_key in portfolio_api._exchange_rate_cache else None
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'fallback_rate': 32.0
         }), 500
 
 if __name__ == '__main__':
