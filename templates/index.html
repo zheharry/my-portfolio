@@ -50,9 +50,6 @@
         }
         .transaction-type-buy { background-color: #d4edda; } /* Light green */
         .transaction-type-sell { background-color: #c8f7c5; } /* Even lighter green instead of red */
-        .btn-export {
-            margin-left: 0.5rem;
-        }
         .year-performance {
             border-left: 4px solid #007bff;
             padding-left: 1rem;
@@ -177,7 +174,9 @@
         <!-- Filter Section -->
         <div class="filter-section">
             <h4><i class="fas fa-filter"></i> Advanced Filters</h4>
-            <div class="row">
+            
+            <!-- First Row: Year, Start Date, End Date -->
+            <div class="row mb-3">
                 <div class="col-md-3">
                     <label class="form-label">年份 (Year)</label>
                     <select id="yearFilter" class="form-select">
@@ -193,6 +192,13 @@
                     <input type="date" id="endDateFilter" class="form-control">
                 </div>
                 <div class="col-md-3">
+                    <!-- Empty space to maintain alignment -->
+                </div>
+            </div>
+            
+            <!-- Second Row: Broker, Symbol, Transaction Type, Action Buttons -->
+            <div class="row">
+                <div class="col-md-3">
                     <label class="form-label">券商/機構 (Broker/Institution)</label>
                     <div class="multi-select-container">
                         <div class="multi-select-controls">
@@ -205,8 +211,6 @@
                         </div>
                     </div>
                 </div>
-            </div>
-            <div class="row mt-3">
                 <div class="col-md-3">
                     <label class="form-label">股票代號 (Stock Symbol)</label>
                     <div class="multi-select-container">
@@ -276,16 +280,19 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-6 d-flex align-items-end">
-                    <button id="applyFilters" class="btn btn-primary me-2">
-                        <i class="fas fa-search"></i> 篩選 (Filter)
-                    </button>
-                    <button id="clearFilters" class="btn btn-secondary me-2">
-                        <i class="fas fa-times"></i> 清除 (Clear)
-                    </button>
-                    <button id="exportData" class="btn btn-success btn-export">
-                        <i class="fas fa-download"></i> 匯出 (Export)
-                    </button>
+                <div class="col-md-3">
+                    <!-- Action Buttons Column -->
+                    <div class="d-flex flex-column gap-2 mt-4">
+                        <button id="applyFilters" class="btn btn-primary">
+                            <i class="fas fa-search"></i> 篩選 (Filter)
+                        </button>
+                        <button id="clearFilters" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> 清除 (Clear)
+                        </button>
+                        <button id="exportData" class="btn btn-success">
+                            <i class="fas fa-download"></i> 匯出 (Export)
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
