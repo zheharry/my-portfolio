@@ -481,7 +481,8 @@ class PortfolioAPI:
         """
         
         # Apply filters
-        params = []
+        params_positions = []
+        params_cash_flow = []
         if filters:
             # Handle multi-select broker filter
             if filters.get('broker'):
@@ -491,12 +492,14 @@ class PortfolioAPI:
                     placeholders = ','.join(['?' for _ in short_names])
                     positions_query += f" AND t.broker IN ({placeholders})"
                     cash_flow_query += f" AND t.broker IN ({placeholders})"
-                    params.extend(short_names)
+                    params_positions.extend(short_names)
+                    params_cash_flow.extend(short_names)
                 elif isinstance(broker_filter, str):
                     short_name = broker_mapping.get(broker_filter, broker_filter)
                     positions_query += " AND t.broker = ?"
                     cash_flow_query += " AND t.broker = ?"
-                    params.extend([short_name, short_name])
+                    params_positions.append(short_name)
+                    params_cash_flow.append(short_name)
         
         positions_query += " GROUP BY t.symbol, t.broker ORDER BY t.symbol"
         
@@ -504,11 +507,11 @@ class PortfolioAPI:
             cursor = conn.cursor()
             
             # Get position analysis
-            cursor.execute(positions_query, params)
+            cursor.execute(positions_query, params_positions)
             positions_data = cursor.fetchall()
             
             # Get cash flow summary  
-            cursor.execute(cash_flow_query, params)
+            cursor.execute(cash_flow_query, params_cash_flow)
             cash_flow_data = cursor.fetchone()
             
             # Process positions
