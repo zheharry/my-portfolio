@@ -41,6 +41,10 @@ class PortfolioDashboard {
         console.log('Starting to load initial data...');
         this.showLoading(true);
         try {
+            console.log('Checking data freshness...');
+            await this.checkDataFreshness();
+            console.log('Data freshness checked');
+            
             console.log('Loading filter options...');
             await this.loadFilterOptions();
             console.log('Filter options loaded');
@@ -517,6 +521,77 @@ class PortfolioDashboard {
         // Simple error display - you could enhance this with a proper notification system
         console.error(message);
         alert(message);
+    }
+    
+    // Check data freshness and display alerts
+    async checkDataFreshness() {
+        try {
+            const response = await this.fetchAPI('/api/data-freshness/report');
+            if (response && response.success && response.report) {
+                this.displayDataFreshnessAlerts(response.report);
+            }
+        } catch (error) {
+            console.error('Error checking data freshness:', error);
+            // Don't show error to user for freshness check failures
+        }
+    }
+    
+    // Display data freshness alerts in the UI
+    displayDataFreshnessAlerts(report) {
+        const alertsContainer = document.getElementById('dataFreshnessAlerts');
+        if (!alertsContainer || !report.alerts || report.alerts.length === 0) {
+            return;
+        }
+        
+        let alertsHTML = '';
+        
+        // Overall status indicator
+        if (report.overall_status === 'DEGRADED') {
+            alertsHTML += `
+                <div class="alert alert-warning alert-dismissible fade show" role="alert">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Data Quality Notice:</strong> Some broker data may be outdated. Please review the details below.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+        }
+        
+        // Individual broker alerts
+        report.alerts.forEach(alert => {
+            const severity = alert.severity === 'HIGH' ? 'danger' : 
+                           alert.severity === 'MEDIUM' ? 'warning' : 'info';
+            const icon = alert.severity === 'HIGH' ? 'fa-exclamation-circle' : 
+                        alert.severity === 'MEDIUM' ? 'fa-exclamation-triangle' : 'fa-info-circle';
+            
+            alertsHTML += `
+                <div class="alert alert-${severity} alert-dismissible fade show" role="alert">
+                    <i class="fas ${icon}"></i>
+                    <strong>${alert.broker}:</strong> ${alert.message}
+                    ${alert.type === 'DATA_LIMITATION' ? 
+                      '<br><small>This may be due to the TDA-Schwab merger completed in October 2023. ' +
+                      'Consider checking for updated statement files or account consolidation.</small>' : 
+                      ''}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+        });
+        
+        // Recommendations
+        if (report.recommendations && report.recommendations.length > 0) {
+            alertsHTML += `
+                <div class="alert alert-info alert-dismissible fade show" role="alert">
+                    <i class="fas fa-lightbulb"></i>
+                    <strong>Recommendations:</strong>
+                    <ul class="mb-0 mt-2">
+                        ${report.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                    </ul>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+        }
+        
+        alertsContainer.innerHTML = alertsHTML;
+        alertsContainer.style.display = alertsHTML ? 'block' : 'none';
     }
 }
 
