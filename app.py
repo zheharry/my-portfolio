@@ -676,7 +676,9 @@ class PortfolioAPI:
         prices = {}
         for symbol in symbols:
             try:
-                ticker = yf.Ticker(symbol)
+                # Handle different stock markets
+                yahoo_symbol = self._get_yahoo_symbol(symbol)
+                ticker = yf.Ticker(yahoo_symbol)
                 hist = ticker.history(period="1d")
                 if not hist.empty:
                     prices[symbol] = hist['Close'].iloc[-1]
@@ -686,6 +688,28 @@ class PortfolioAPI:
                 print(f"Error fetching price for {symbol}: {e}")
                 prices[symbol] = None
         return prices
+    
+    def _get_yahoo_symbol(self, symbol):
+        """Convert local symbol to Yahoo Finance format"""
+        # Taiwan stock market symbols
+        taiwan_symbols = {
+            '台積電': '2330.TW',
+            '聯發科': '2454.TW', 
+            '中鋼': '2002.TW',
+            '富邦台50': '0050.TW',
+            '鴻海': '2317.TW'
+        }
+        
+        # Check if it's a Taiwan stock
+        if symbol in taiwan_symbols:
+            return taiwan_symbols[symbol]
+        
+        # Check if it's already in Taiwan format (numbers only)
+        if symbol.isdigit() and len(symbol) == 4:
+            return f"{symbol}.TW"
+        
+        # For US stocks, return as-is
+        return symbol
 
     def calculate_unrealized_pnl(self, filters=None):
         """Calculate unrealized P&L for current holdings using Yahoo Finance prices"""
