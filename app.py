@@ -212,11 +212,48 @@ class PortfolioAPI:
             
             return sorted(full_names)
     
-    def get_symbols(self):
-        """Get all unique symbols"""
+    def get_symbols(self, broker_filters=None):
+        """Get all unique symbols, optionally filtered by broker"""
+        # Broker mapping for filtering (same as in get_transactions)
+        broker_mapping = {
+            '國泰證券': 'CATHAY',
+            'Charles Schwab': 'SCHWAB', 
+            'TD Ameritrade': 'TDA'
+        }
+        
+        query = """
+            SELECT DISTINCT t.symbol 
+            FROM transactions t
+            JOIN accounts a ON t.account_id = a.account_id
+            WHERE t.symbol IS NOT NULL
+        """
+        params = []
+        
+        if broker_filters:
+            if isinstance(broker_filters, list):
+                if len(broker_filters) > 0:
+                    # Map full names to short names for all brokers
+                    short_names = []
+                    full_names = []
+                    for broker in broker_filters:
+                        short_name = broker_mapping.get(broker, broker)
+                        short_names.append(short_name)
+                        full_names.append(broker)
+                    
+                    # Filter symbols by broker (similar to get_transactions logic)
+                    query += f" AND (t.broker IN ({','.join(['?' for _ in short_names])}) OR a.broker IN ({','.join(['?' for _ in short_names])}) OR a.institution IN ({','.join(['?' for _ in full_names])}))"
+                    params.extend(short_names + short_names + full_names)
+            else:
+                # Single broker (backward compatibility)
+                short_name = broker_mapping.get(broker_filters, broker_filters)
+                query += " AND (t.broker = ? OR a.broker = ? OR a.institution = ?)"
+                params.extend([short_name, short_name, broker_filters])
+        
+        query += " ORDER BY t.symbol"
+        
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT symbol FROM transactions WHERE symbol IS NOT NULL ORDER BY symbol")
+            cursor.execute(query, params)
             return [row[0] for row in cursor.fetchall()]
     
     def get_currencies(self):
@@ -562,8 +599,15 @@ def api_brokers():
 
 @app.route('/api/symbols')
 def api_symbols():
-    """Get all symbols"""
-    symbols = portfolio_api.get_symbols()
+    """Get all symbols, optionally filtered by broker"""
+    broker_filters = request.args.getlist('broker')  # Support multiple brokers
+    # Remove empty values
+    broker_filters = [b for b in broker_filters if b]
+    
+    if not broker_filters:
+        broker_filters = None
+        
+    symbols = portfolio_api.get_symbols(broker_filters)
     return jsonify(symbols)
 
 @app.route('/api/currencies')

@@ -153,6 +153,12 @@ class PortfolioDashboard {
             // Add change event listener
             checkbox.addEventListener('change', () => {
                 this.updateSelectionCount(containerId);
+                
+                // If this is the broker filter, refresh symbols
+                if (containerId === 'brokerFilter') {
+                    this.onBrokerFilterChange();
+                }
+                
                 this.applyFilters();
             });
         });
@@ -202,6 +208,12 @@ class PortfolioDashboard {
         });
 
         this.updateSelectionCount(containerId);
+        
+        // If this is the broker filter, refresh symbols
+        if (containerId === 'brokerFilter') {
+            this.onBrokerFilterChange();
+        }
+        
         this.applyFilters();
     }
 
@@ -216,6 +228,12 @@ class PortfolioDashboard {
         });
 
         this.updateSelectionCount(containerId);
+        
+        // If this is the broker filter, refresh symbols
+        if (containerId === 'brokerFilter') {
+            this.onBrokerFilterChange();
+        }
+        
         this.applyFilters();
     }
 
@@ -313,6 +331,68 @@ class PortfolioDashboard {
         });
 
         return filters;
+    }
+
+    // Handle broker filter changes - refresh symbols and clear symbol selection
+    async onBrokerFilterChange() {
+        try {
+            // Get selected brokers
+            const selectedBrokers = this.getSelectedBrokers();
+            
+            // Refresh symbols based on selected brokers
+            await this.refreshSymbols(selectedBrokers);
+            
+        } catch (error) {
+            console.error('Error handling broker filter change:', error);
+        }
+    }
+
+    // Get currently selected brokers
+    getSelectedBrokers() {
+        const container = document.getElementById('brokerFilter');
+        if (!container) return [];
+        
+        const checkedBoxes = container.querySelectorAll('input[type="checkbox"]:checked');
+        return Array.from(checkedBoxes).map(checkbox => checkbox.value);
+    }
+
+    // Refresh symbols based on selected brokers
+    async refreshSymbols(selectedBrokers) {
+        try {
+            // Build URL with broker filters
+            let url = '/api/symbols';
+            if (selectedBrokers.length > 0) {
+                const params = new URLSearchParams();
+                selectedBrokers.forEach(broker => {
+                    params.append('broker', broker);
+                });
+                url += `?${params}`;
+            }
+            
+            // Fetch filtered symbols
+            const symbols = await this.fetchAPI(url);
+            
+            // Clear current symbol selection
+            this.clearSymbolSelection();
+            
+            // Repopulate symbol filter with new symbols
+            this.populateMultiSelectCheckboxes('symbolFilter', symbols);
+            
+        } catch (error) {
+            console.error('Error refreshing symbols:', error);
+        }
+    }
+
+    // Clear symbol selection
+    clearSymbolSelection() {
+        const container = document.getElementById('symbolFilter');
+        if (!container) return;
+        
+        // Remove all current symbol checkboxes
+        container.innerHTML = '';
+        
+        // Update selection count
+        this.updateSelectionCount('symbolFilter');
     }
 
     // Load transactions with current filters
