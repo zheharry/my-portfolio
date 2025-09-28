@@ -500,7 +500,7 @@ class MultiBrokerPortfolioParser:
             elif current_date and line.strip():
                 # This might be a continuation line without a date - use the current date
                 # Skip lines that are just industry fees or other non-transaction info
-                if not any(skip_word in line for skip_word in ['Industry Fee', 'JUNG CHE']):
+                if not any(skip_word in line for skip_word in ['Industry Fee', 'NAME_PART']):  # Skip irrelevant lines
                     # Check if this looks like a transaction line (has category/action)
                     if any(indicator in line for indicator in ['Sale', 'Purchase', 'Buy', 'Withdrawal', 'Deposit', 'Interest', 'Dividend']):
                         transaction = self.parse_detailed_transaction_line(line.strip(), current_date)
@@ -550,7 +550,7 @@ class MultiBrokerPortfolioParser:
             if symbol_match:
                 potential_symbol = symbol_match.group(1)
                 # Filter out common non-symbol words
-                if potential_symbol not in ['CORP', 'INC', 'LLC', 'CLASS', 'FUND', 'SCHWAB', 'BANK', 'TFRD', 'JUNG', 'AMEX']:
+                if potential_symbol not in ['CORP', 'INC', 'LLC', 'CLASS', 'FUND', 'SCHWAB', 'BANK', 'TFRD', 'NAME_PART', 'AMEX']:
                     transaction['symbol'] = potential_symbol
             
             # Extract company name (between symbol and quantity)
