@@ -116,7 +116,11 @@ class PortfolioDashboard {
             // Add event listener for selection count updates
             select.addEventListener('change', () => {
                 this.updateSelectionCount(selectId);
+                this.applyFilters(); // Auto-apply filters
             });
+            
+            // Initialize count display
+            this.updateSelectionCount(selectId);
         } else {
             // Single select logic (keep existing for year filter etc.)
             const firstOption = select.options[0];
