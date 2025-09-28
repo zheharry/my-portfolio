@@ -226,6 +226,22 @@ class PortfolioAPI:
             cursor.execute("SELECT DISTINCT currency FROM transactions WHERE currency IS NOT NULL ORDER BY currency")
             return [row[0] for row in cursor.fetchall()]
     
+    def convert_to_ntd(self, amount, from_currency):
+        """Convert amount to NTD using fixed exchange rate"""
+        if amount is None:
+            return 0
+        
+        # Fixed exchange rate USD to NTD (you can make this configurable later)
+        usd_to_ntd_rate = 32.0  # Approximate rate
+        
+        if from_currency == 'USD':
+            return amount * usd_to_ntd_rate
+        elif from_currency == 'NTD':
+            return amount
+        else:
+            # Default to treating as NTD if currency is unknown
+            return amount
+    
     def get_transactions(self, filters=None):
         """Get filtered transactions with enhanced filtering and multi-select support"""
         # Broker mapping for filtering
@@ -321,10 +337,6 @@ class PortfolioAPI:
             if filters.get('year'):
                 query += " AND strftime('%Y', t.transaction_date) = ?"
                 params.append(str(filters['year']))
-            
-            if filters.get('currency'):
-                query += " AND t.currency = ?"
-                params.append(filters['currency'])
         
         query += " ORDER BY t.transaction_date DESC, t.id DESC"
         
@@ -335,7 +347,7 @@ class PortfolioAPI:
                    for row in cursor.fetchall()]
     
     def get_portfolio_summary(self, filters=None):
-        """Get enhanced portfolio summary with fees and multi-select support"""
+        """Get enhanced portfolio summary with fees and multi-select support, converted to NTD"""
         # Broker mapping for filtering
         broker_mapping = {
             '國泰證券': 'CATHAY',
@@ -343,16 +355,15 @@ class PortfolioAPI:
             'TD Ameritrade': 'TDA'
         }
         
+        # Get all transactions with filtering, but include currency for conversion
         query = """
             SELECT 
-                SUM(CASE WHEN transaction_type = '賣出' THEN net_amount ELSE 0 END) as total_sales,
-                SUM(CASE WHEN transaction_type = '買進' THEN ABS(net_amount) ELSE 0 END) as total_purchases,
-                SUM(CASE WHEN transaction_type = 'DIVIDEND' THEN net_amount ELSE 0 END) as total_dividends,
-                SUM(fee) as total_fees,
-                SUM(tax) as total_taxes,
-                COUNT(*) as total_transactions,
-                SUM(CASE WHEN net_amount > 0 AND symbol IS NULL THEN net_amount ELSE 0 END) as total_deposits,
-                SUM(CASE WHEN net_amount < 0 AND symbol IS NULL THEN ABS(net_amount) ELSE 0 END) as total_withdrawals
+                t.net_amount,
+                t.fee,
+                t.tax,
+                t.transaction_type,
+                t.symbol,
+                t.currency
             FROM transactions t
             WHERE 1=1
         """
@@ -426,21 +437,63 @@ class PortfolioAPI:
             if filters.get('end_date'):
                 query += " AND t.transaction_date <= ?"
                 params.append(filters['end_date'])
-            
-            if filters.get('currency'):
-                query += " AND t.currency = ?"
-                params.append(filters['currency'])
         
+        # Execute query and convert amounts to NTD
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
-            result = dict(zip([col[0] for col in cursor.description], cursor.fetchone()))
             
-            # Calculate realized gain/loss
-            result['realized_gain_loss'] = (result['total_sales'] or 0) - (result['total_purchases'] or 0)
-            result['net_after_fees'] = result['realized_gain_loss'] - (result['total_fees'] or 0) - (result['total_taxes'] or 0)
+            # Initialize totals in NTD
+            total_sales_ntd = 0
+            total_purchases_ntd = 0
+            total_dividends_ntd = 0
+            total_fees_ntd = 0
+            total_taxes_ntd = 0
+            total_deposits_ntd = 0
+            total_withdrawals_ntd = 0
+            total_transactions = 0
             
-            return result
+            # Process each transaction and convert to NTD
+            for row in cursor.fetchall():
+                net_amount, fee, tax, transaction_type, symbol, currency = row
+                
+                # Convert amounts to NTD
+                net_amount_ntd = self.convert_to_ntd(net_amount or 0, currency or 'NTD')
+                fee_ntd = self.convert_to_ntd(fee or 0, currency or 'NTD')
+                tax_ntd = self.convert_to_ntd(tax or 0, currency or 'NTD')
+                
+                total_transactions += 1
+                total_fees_ntd += fee_ntd
+                total_taxes_ntd += tax_ntd
+                
+                # Categorize by transaction type
+                if transaction_type == '賣出':
+                    total_sales_ntd += net_amount_ntd
+                elif transaction_type == '買進':
+                    total_purchases_ntd += abs(net_amount_ntd)
+                elif transaction_type == 'DIVIDEND':
+                    total_dividends_ntd += net_amount_ntd
+                elif net_amount_ntd > 0 and symbol is None:  # Deposit
+                    total_deposits_ntd += net_amount_ntd
+                elif net_amount_ntd < 0 and symbol is None:  # Withdrawal
+                    total_withdrawals_ntd += abs(net_amount_ntd)
+            
+            # Calculate derived metrics
+            realized_gain_loss_ntd = total_sales_ntd - total_purchases_ntd
+            net_after_fees_ntd = realized_gain_loss_ntd - total_fees_ntd - total_taxes_ntd
+            
+            return {
+                'total_sales': total_sales_ntd,
+                'total_purchases': total_purchases_ntd,
+                'total_dividends': total_dividends_ntd,
+                'total_fees': total_fees_ntd,
+                'total_taxes': total_taxes_ntd,
+                'total_deposits': total_deposits_ntd,
+                'total_withdrawals': total_withdrawals_ntd,
+                'total_transactions': total_transactions,
+                'realized_gain_loss': realized_gain_loss_ntd,
+                'net_after_fees': net_after_fees_ntd
+            }
     
     def get_performance_by_year(self):
         """Get performance metrics by year with fees"""
@@ -550,7 +603,6 @@ def api_summary():
         'year': request.args.get('year'),
         'start_date': request.args.get('start_date'),
         'end_date': request.args.get('end_date'),
-        'currency': request.args.get('currency'),
     }
     
     # Remove None values and empty lists
