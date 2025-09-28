@@ -188,6 +188,20 @@ class MultiBrokerPortfolioParser:
             self.logger.warning(f"Could not identify broker for {file_name}")
             return 'UNKNOWN'
     
+    def calculate_net_amount(self, transaction: Dict) -> None:
+        """
+        Calculate net_amount for a transaction based on amount, fees, and taxes.
+        Net Amount = Amount - Fees - Taxes
+        
+        For TDA and Schwab transactions, this provides the actual net impact on the account.
+        """
+        amount = transaction.get('amount', 0)
+        fee = transaction.get('fee', 0)
+        tax = transaction.get('tax', 0)
+        
+        # Calculate net amount
+        transaction['net_amount'] = amount - abs(fee) - abs(tax)
+    
     def standardize_transaction_amount(self, transaction: Dict) -> None:
         """
         Standardize transaction amounts based on transaction type from a cash flow perspective:
@@ -210,6 +224,9 @@ class MultiBrokerPortfolioParser:
         # For unknown types, leave amount as is but log it
         elif transaction_type and amount != 0:
             self.logger.warning(f"Unknown transaction type '{transaction_type}' - amount not standardized")
+        
+        # Always calculate net_amount after standardizing the amount
+        self.calculate_net_amount(transaction)
     
     def parse_schwab_statement(self, text: str, file_path: Path) -> Dict:
         """Parse modern Charles Schwab statement data (post-TDA merger)"""
@@ -441,12 +458,12 @@ class MultiBrokerPortfolioParser:
         else:
             transaction['amount'] = extracted_amount
         
-        # Standardize the amount based on transaction type
+        # Standardize the amount based on transaction type and calculate net_amount
         if extracted_amount != 0:
             self.standardize_transaction_amount(transaction)
         
-        # Only return transaction if we found meaningful data
-        return transaction if (extracted_amount != 0) else None
+        # Only return transaction if we found meaningful data (amount, symbol, or tax)
+        return transaction if (transaction['amount'] != 0 or transaction['symbol'] or transaction['tax'] != 0) else None
     
     def parse_schwab_detailed_transactions(self, trans_text: str, current_year: str) -> List[Dict]:
         """Parse detailed Schwab transaction format with stocks (like 088 account)"""
@@ -614,6 +631,9 @@ class MultiBrokerPortfolioParser:
                 transaction['amount'] = 0
             else:
                 transaction['amount'] = extracted_amount
+            
+            # Use standardized amount handling for non-stock transactions too
+            self.standardize_transaction_amount(transaction)
         
         # Only return transaction if we found meaningful data (amount, symbol, or tax)
         return transaction if (transaction['amount'] != 0 or transaction['symbol'] or transaction['tax'] != 0) else None
@@ -758,7 +778,9 @@ class MultiBrokerPortfolioParser:
                     'symbol': '',
                     'quantity': 0,
                     'price': 0,
-                    'amount': 0
+                    'amount': 0,
+                    'fee': 0,
+                    'tax': 0
                 }
                 
                 # Parse transaction type
