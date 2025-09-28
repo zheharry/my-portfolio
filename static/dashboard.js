@@ -24,7 +24,7 @@ class PortfolioDashboard {
         
         // Auto-apply filters on change for better UX
         const filterElements = [
-            'yearFilter', 'startDateFilter', 'endDateFilter', 'currencyFilter'
+            'yearFilter', 'startDateFilter', 'endDateFilter'
         ];
         
         filterElements.forEach(id => {
@@ -84,10 +84,6 @@ class PortfolioDashboard {
             // Load brokers (now returns normalized full names without duplicates)
             const brokers = await this.fetchAPI('/api/brokers');
             this.populateSelect('brokerFilter', brokers);
-
-            // Load currencies
-            const currencies = await this.fetchAPI('/api/currencies');
-            this.populateSelect('currencyFilter', currencies);
 
             // Populate years (2017-2025)
             const currentYear = new Date().getFullYear();
@@ -258,7 +254,7 @@ class PortfolioDashboard {
     // Clear filters
     clearFilters() {
         const singleFilterElements = [
-            'yearFilter', 'startDateFilter', 'endDateFilter', 'currencyFilter'
+            'yearFilter', 'startDateFilter', 'endDateFilter'
         ];
         
         // Clear traditional single selects
@@ -286,8 +282,7 @@ class PortfolioDashboard {
         const filterMappings = {
             'yearFilter': 'year',
             'startDateFilter': 'start_date',
-            'endDateFilter': 'end_date',
-            'currencyFilter': 'currency'
+            'endDateFilter': 'end_date'
         };
 
         // Handle traditional single selects
@@ -410,20 +405,20 @@ class PortfolioDashboard {
         });
     }
 
-    // Update summary cards
+    // Update summary cards (all amounts converted to NTD)
     updateSummaryCards(summary) {
-        document.getElementById('totalInvestment').textContent = `$${this.formatNumber(summary.total_purchases || 0)}`;
+        document.getElementById('totalInvestment').textContent = `NT$${this.formatNumber(summary.total_purchases || 0)}`;
         
         const realizedPL = summary.realized_gain_loss || 0;
         const realizedPLElement = document.getElementById('realizedPL');
-        realizedPLElement.innerHTML = this.formatNetAmount(realizedPL);
+        realizedPLElement.innerHTML = this.formatNetAmount(realizedPL, 'NTD');
         realizedPLElement.className = realizedPL >= 0 ? 'gain' : 'loss';
         
-        document.getElementById('totalFees').textContent = `$${this.formatNumber(summary.total_fees || 0)}`;
+        document.getElementById('totalFees').textContent = `NT$${this.formatNumber(summary.total_fees || 0)}`;
         
         const netProfit = summary.net_after_fees || 0;
         const netProfitElement = document.getElementById('netProfit');
-        netProfitElement.innerHTML = this.formatNetAmount(netProfit);
+        netProfitElement.innerHTML = this.formatNetAmount(netProfit, 'NTD');
         netProfitElement.className = netProfit >= 0 ? 'gain' : 'loss';
     }
 
@@ -676,17 +671,19 @@ class PortfolioDashboard {
         });
     }
 
-    formatNetAmount(num) {
-        if (num === null || num === undefined) return '$0';
+    formatNetAmount(num, currency = 'USD') {
+        if (num === null || num === undefined) return currency === 'NTD' ? 'NT$0' : '$0';
         const formatted = parseFloat(num).toLocaleString('en-US', { 
             minimumFractionDigits: 0, 
             maximumFractionDigits: 2 
         });
         
+        const currencySymbol = currency === 'NTD' ? 'NT$' : '$';
+        
         if (num < 0) {
-            return `<span class="net-loss">-$${formatted.replace('-', '')}</span>`;
+            return `<span class="net-loss">-${currencySymbol}${formatted.replace('-', '')}</span>`;
         }
-        return `$${formatted}`;
+        return `${currencySymbol}${formatted}`;
     }
 
     formatDate(dateStr) {
