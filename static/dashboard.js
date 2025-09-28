@@ -25,7 +25,7 @@ class PortfolioDashboard {
         // Auto-apply filters on change for better UX
         const filterElements = [
             'yearFilter', 'startDateFilter', 'endDateFilter', 'brokerFilter',
-            'symbolFilter', 'transactionTypeFilter'
+            'symbolFilter', 'transactionTypeFilter', 'currencyFilter'
         ];
         
         filterElements.forEach(id => {
@@ -81,6 +81,10 @@ class PortfolioDashboard {
             // Load brokers (now returns normalized full names without duplicates)
             const brokers = await this.fetchAPI('/api/brokers');
             this.populateSelect('brokerFilter', brokers);
+
+            // Load currencies
+            const currencies = await this.fetchAPI('/api/currencies');
+            this.populateSelect('currencyFilter', currencies);
 
             // Populate years (2017-2025)
             const currentYear = new Date().getFullYear();
@@ -159,7 +163,7 @@ class PortfolioDashboard {
     clearFilters() {
         const filterElements = [
             'yearFilter', 'startDateFilter', 'endDateFilter', 'brokerFilter',
-            'symbolFilter', 'transactionTypeFilter'
+            'symbolFilter', 'transactionTypeFilter', 'currencyFilter'
         ];
         
         filterElements.forEach(id => {
@@ -183,7 +187,8 @@ class PortfolioDashboard {
             'endDateFilter': 'end_date',
             'brokerFilter': 'broker',
             'symbolFilter': 'symbol',
-            'transactionTypeFilter': 'transaction_type'
+            'transactionTypeFilter': 'transaction_type',
+            'currencyFilter': 'currency'
         };
 
         Object.entries(filterMappings).forEach(([elementId, filterKey]) => {
@@ -292,6 +297,7 @@ class PortfolioDashboard {
                 <td><span class="text-info">$${this.formatNumber(transaction.tax)}</span></td>
                 <td class="${transaction.net_amount >= 0 ? 'gain' : 'loss'}">${this.formatNetAmount(transaction.net_amount)}</td>
                 <td><span class="badge bg-secondary">${transaction.broker}</span></td>
+                <td><span class="badge bg-primary">${transaction.currency || 'USD'}</span></td>
                 <td><small>${transaction.order_id || ''}</small></td>
             `;
             
