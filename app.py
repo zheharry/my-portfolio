@@ -442,6 +442,146 @@ class PortfolioAPI:
             
             return result
     
+    def get_portfolio_performance_analysis(self, filters=None):
+        """Get portfolio performance analysis distinguishing between cash flow and investment performance"""
+        # Broker mapping for filtering
+        broker_mapping = {
+            '國泰證券': 'CATHAY',
+            'Charles Schwab': 'SCHWAB', 
+            'TD Ameritrade': 'TDA'
+        }
+        
+        # Base query for position analysis
+        positions_query = """
+            SELECT 
+                t.symbol,
+                t.broker,
+                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.quantity ELSE 0 END) as total_bought,
+                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.quantity ELSE 0 END) as total_sold,
+                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN ABS(t.net_amount) ELSE 0 END) as total_invested,
+                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.net_amount ELSE 0 END) as total_received,
+                AVG(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.price ELSE NULL END) as avg_buy_price,
+                AVG(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.price ELSE NULL END) as avg_sell_price
+            FROM transactions t
+            WHERE t.symbol IS NOT NULL AND t.symbol != ''
+        """
+        
+        # Cash flow analysis query
+        cash_flow_query = """
+            SELECT 
+                SUM(CASE WHEN transaction_type = '賣出' OR transaction_type = 'SELL' THEN net_amount ELSE 0 END) as total_sales_proceeds,
+                SUM(CASE WHEN transaction_type = '買進' OR transaction_type = 'BUY' THEN ABS(net_amount) ELSE 0 END) as total_purchase_cost,
+                SUM(CASE WHEN transaction_type = 'DIVIDEND' THEN net_amount ELSE 0 END) as total_dividends,
+                SUM(CASE WHEN net_amount > 0 AND symbol IS NULL THEN net_amount ELSE 0 END) as total_deposits,
+                SUM(CASE WHEN net_amount < 0 AND symbol IS NULL THEN ABS(net_amount) ELSE 0 END) as total_withdrawals,
+                SUM(fee) as total_fees,
+                SUM(tax) as total_taxes
+            FROM transactions t
+            WHERE 1=1
+        """
+        
+        # Apply filters
+        params = []
+        if filters:
+            # Handle multi-select broker filter
+            if filters.get('broker'):
+                broker_filter = filters['broker']
+                if isinstance(broker_filter, list) and len(broker_filter) > 0:
+                    short_names = [broker_mapping.get(broker, broker) for broker in broker_filter]
+                    placeholders = ','.join(['?' for _ in short_names])
+                    positions_query += f" AND t.broker IN ({placeholders})"
+                    cash_flow_query += f" AND t.broker IN ({placeholders})"
+                    params.extend(short_names)
+                elif isinstance(broker_filter, str):
+                    short_name = broker_mapping.get(broker_filter, broker_filter)
+                    positions_query += " AND t.broker = ?"
+                    cash_flow_query += " AND t.broker = ?"
+                    params.extend([short_name, short_name])
+        
+        positions_query += " GROUP BY t.symbol, t.broker ORDER BY t.symbol"
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get position analysis
+            cursor.execute(positions_query, params)
+            positions_data = cursor.fetchall()
+            
+            # Get cash flow summary  
+            cursor.execute(cash_flow_query, params)
+            cash_flow_data = cursor.fetchone()
+            
+            # Process positions
+            positions_summary = []
+            total_current_positions_cost = 0
+            total_realized_gain_loss = 0
+            
+            for row in positions_data:
+                symbol, broker, bought, sold, invested, received, avg_buy, avg_sell = row
+                
+                remaining_shares = bought - sold
+                realized_gain_loss = received - (invested * (sold / bought) if bought > 0 else 0)
+                current_position_cost = invested * (remaining_shares / bought) if bought > 0 else 0
+                
+                total_current_positions_cost += current_position_cost
+                total_realized_gain_loss += realized_gain_loss
+                
+                if remaining_shares > 0 or realized_gain_loss != 0:
+                    positions_summary.append({
+                        'symbol': symbol,
+                        'broker': broker,
+                        'total_bought': bought,
+                        'total_sold': sold,
+                        'remaining_shares': remaining_shares,
+                        'total_invested': invested,
+                        'total_received': received,
+                        'current_position_cost': current_position_cost,
+                        'realized_gain_loss': realized_gain_loss,
+                        'avg_buy_price': avg_buy or 0,
+                        'avg_sell_price': avg_sell or 0
+                    })
+            
+            # Process cash flow data
+            (sales_proceeds, purchase_cost, dividends, deposits, withdrawals, fees, taxes) = cash_flow_data or (0, 0, 0, 0, 0, 0, 0)
+            
+            # Calculate different metrics
+            net_cash_flow = sales_proceeds - purchase_cost + dividends - fees - taxes + deposits - withdrawals
+            net_invested_capital = purchase_cost + fees - sales_proceeds  # How much capital is currently "tied up" in positions
+            portfolio_performance = total_realized_gain_loss  # Realized gains/losses only
+            
+            return {
+                'cash_flow_analysis': {
+                    'net_cash_flow': net_cash_flow,
+                    'description': 'Net cash movement in/out of account (negative = more money spent than received)',
+                    'total_purchase_cost': purchase_cost,
+                    'total_sales_proceeds': sales_proceeds,
+                    'total_dividends': dividends,
+                    'total_deposits': deposits,
+                    'total_withdrawals': withdrawals,
+                    'total_fees': fees,
+                    'total_taxes': taxes
+                },
+                'portfolio_performance_analysis': {
+                    'realized_gain_loss': total_realized_gain_loss,
+                    'description': 'Actual gains/losses from completed trades',
+                    'current_positions_cost_basis': total_current_positions_cost,
+                    'net_invested_capital': net_invested_capital,
+                    'portfolio_performance_pct': (total_realized_gain_loss / purchase_cost * 100) if purchase_cost > 0 else 0
+                },
+                'current_positions': positions_summary,
+                'summary': {
+                    'total_positions': len([p for p in positions_summary if p['remaining_shares'] > 0]),
+                    'total_symbols_traded': len(positions_summary),
+                    'explanation': {
+                        'net_cash_flow_vs_portfolio_performance': {
+                            'cash_flow': 'Shows money in/out of account (like bank statement)',
+                            'portfolio_performance': 'Shows investment gains/losses (like investment return)',
+                            'key_difference': 'Cash flow includes cost of positions still held; portfolio performance focuses on actual gains/losses'
+                        }
+                    }
+                }
+            }
+    
     def get_performance_by_year(self):
         """Get performance metrics by year with fees"""
         query = """
@@ -660,7 +800,8 @@ def broker_summary():
                     'transaction_count': row[3],
                     'buy_transactions': row[4],
                     'sell_transactions': row[5],
-                    'total_net_amount': row[6] or 0
+                    'total_net_cash_flow': row[6] or 0,  # Clarified name
+                    'net_amount_explanation': 'This represents net cash flow (money in/out), not portfolio performance. Negative values indicate more money spent on purchases than received from sales.'
                 })
             
             return jsonify({
@@ -668,6 +809,30 @@ def broker_summary():
                 'broker_summary': broker_summary
             })
             
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/portfolio-performance')
+def portfolio_performance():
+    """Get portfolio performance analysis distinguishing between cash flow and investment returns"""
+    try:
+        filters = request.args.to_dict(flat=False)
+        # Convert single-item lists to strings for backward compatibility
+        for key, value in filters.items():
+            if isinstance(value, list) and len(value) == 1:
+                filters[key] = value[0]
+        
+        api = PortfolioAPI()
+        analysis = api.get_portfolio_performance_analysis(filters)
+        
+        return jsonify({
+            'success': True,
+            'portfolio_performance': analysis
+        })
+        
     except Exception as e:
         return jsonify({
             'success': False,
