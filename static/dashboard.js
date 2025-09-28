@@ -24,8 +24,7 @@ class PortfolioDashboard {
         
         // Auto-apply filters on change for better UX
         const filterElements = [
-            'yearFilter', 'startDateFilter', 'endDateFilter', 'brokerFilter',
-            'symbolFilter', 'transactionTypeFilter', 'currencyFilter'
+            'yearFilter', 'startDateFilter', 'endDateFilter', 'currencyFilter'
         ];
         
         filterElements.forEach(id => {
@@ -48,6 +47,10 @@ class PortfolioDashboard {
             console.log('Loading filter options...');
             await this.loadFilterOptions();
             console.log('Filter options loaded');
+            
+            // Initialize multi-select controls after options are loaded
+            this.initializeMultiSelectControls();
+            console.log('Multi-select controls initialized');
             
             console.log('Loading transactions...');
             await this.loadTransactions();
@@ -104,40 +107,133 @@ class PortfolioDashboard {
         const select = document.getElementById(selectId);
         if (!select) return;
 
-        // For multi-select, clear all options except the first placeholder
-        if (select.multiple) {
-            const firstOption = select.options[0];
-            select.innerHTML = '';
-            // Don't add the placeholder option for multi-select
-            
-            options.forEach(option => {
-                const optionElement = document.createElement('option');
-                optionElement.value = option;
-                optionElement.textContent = option;
-                select.appendChild(optionElement);
-            });
-            
-            // Add event listener for selection count updates
-            select.addEventListener('change', () => {
-                this.updateSelectionCount(selectId);
-                this.applyFilters(); // Auto-apply filters
-            });
-            
-            // Initialize count display
-            this.updateSelectionCount(selectId);
-        } else {
-            // Single select logic (keep existing for year filter etc.)
-            const firstOption = select.options[0];
-            select.innerHTML = '';
-            select.appendChild(firstOption);
-
-            options.forEach(option => {
-                const optionElement = document.createElement('option');
-                optionElement.value = option;
-                optionElement.textContent = option;
-                select.appendChild(optionElement);
-            });
+        // Check if this is a multi-select checkbox container
+        if (select.classList.contains('multi-select-list')) {
+            this.populateMultiSelectCheckboxes(selectId, options);
+            return;
         }
+
+        // Handle traditional single selects (year, currency, etc.)
+        const firstOption = select.options[0];
+        select.innerHTML = '';
+        select.appendChild(firstOption);
+
+        options.forEach(option => {
+            const optionElement = document.createElement('option');
+            optionElement.value = option;
+            optionElement.textContent = option;
+            select.appendChild(optionElement);
+        });
+    }
+
+    // Populate multi-select checkbox container
+    populateMultiSelectCheckboxes(containerId, options) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        // Clear existing checkboxes except for transaction type which has static options
+        if (containerId !== 'transactionTypeFilter') {
+            container.innerHTML = '';
+        }
+
+        options.forEach((option, index) => {
+            const checkboxItem = document.createElement('div');
+            checkboxItem.className = 'checkbox-item';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `${containerId}_${index}`;
+            checkbox.value = option;
+            checkbox.checked = true; // Select all by default
+
+            const label = document.createElement('label');
+            label.htmlFor = checkbox.id;
+            label.textContent = option;
+
+            checkboxItem.appendChild(checkbox);
+            checkboxItem.appendChild(label);
+            container.appendChild(checkboxItem);
+
+            // Add change event listener
+            checkbox.addEventListener('change', () => {
+                this.updateSelectionCount(containerId);
+                this.applyFilters();
+            });
+        });
+
+        // Initialize count display
+        this.updateSelectionCount(containerId);
+    }
+
+    // Initialize multi-select controls
+    initializeMultiSelectControls() {
+        // Add event listeners for select-all buttons
+        document.querySelectorAll('.select-all-btn').forEach(button => {
+            button.addEventListener('click', (e) => {
+                const targetId = e.target.getAttribute('data-target');
+                this.selectAllItems(targetId);
+            });
+        });
+
+        // Add event listeners for deselect-all buttons
+        document.querySelectorAll('.deselect-all-btn').forEach(button => {
+            button.addEventListener('click', (e) => {
+                const targetId = e.target.getAttribute('data-target');
+                this.deselectAllItems(targetId);
+            });
+        });
+
+        // Initialize transaction type count (since it has static options)
+        this.updateSelectionCount('transactionTypeFilter');
+        
+        // Add change listeners to transaction type checkboxes
+        document.querySelectorAll('#transactionTypeFilter input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', () => {
+                this.updateSelectionCount('transactionTypeFilter');
+                this.applyFilters();
+            });
+        });
+    }
+
+    // Select all items in a multi-select container
+    selectAllItems(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = true;
+        });
+
+        this.updateSelectionCount(containerId);
+        this.applyFilters();
+    }
+
+    // Deselect all items in a multi-select container
+    deselectAllItems(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = false;
+        });
+
+        this.updateSelectionCount(containerId);
+        this.applyFilters();
+    }
+
+    // Update selection count display
+    updateSelectionCount(containerId) {
+        const container = document.getElementById(containerId);
+        const countElement = document.getElementById(containerId.replace('Filter', 'Count'));
+        
+        if (!container || !countElement) return;
+
+        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        const checkedBoxes = container.querySelectorAll('input[type="checkbox"]:checked');
+        
+        countElement.textContent = `${checkedBoxes.length} / ${checkboxes.length}`;
     }
 
     // Apply filters
@@ -161,16 +257,22 @@ class PortfolioDashboard {
 
     // Clear filters
     clearFilters() {
-        const filterElements = [
-            'yearFilter', 'startDateFilter', 'endDateFilter', 'brokerFilter',
-            'symbolFilter', 'transactionTypeFilter', 'currencyFilter'
+        const singleFilterElements = [
+            'yearFilter', 'startDateFilter', 'endDateFilter', 'currencyFilter'
         ];
         
-        filterElements.forEach(id => {
+        // Clear traditional single selects
+        singleFilterElements.forEach(id => {
             const element = document.getElementById(id);
             if (element) {
                 element.value = '';
             }
+        });
+
+        // Clear multi-select checkboxes (select all by default)
+        const multiSelectContainers = ['brokerFilter', 'symbolFilter', 'transactionTypeFilter'];
+        multiSelectContainers.forEach(containerId => {
+            this.selectAllItems(containerId);
         });
         
         this.currentFilters = {};
@@ -185,29 +287,32 @@ class PortfolioDashboard {
             'yearFilter': 'year',
             'startDateFilter': 'start_date',
             'endDateFilter': 'end_date',
-            'brokerFilter': 'broker',
-            'symbolFilter': 'symbol',
-            'transactionTypeFilter': 'transaction_type',
             'currencyFilter': 'currency'
         };
 
+        // Handle traditional single selects
         Object.entries(filterMappings).forEach(([elementId, filterKey]) => {
             const element = document.getElementById(elementId);
-            if (element) {
-                if (element.multiple) {
-                    // Handle multi-select
-                    const selectedValues = Array.from(element.selectedOptions)
-                        .map(option => option.value)
-                        .filter(value => value !== ''); // Remove empty placeholder values
-                    
-                    if (selectedValues.length > 0) {
-                        filters[filterKey] = selectedValues;
-                    }
-                } else {
-                    // Handle single select
-                    if (element.value) {
-                        filters[filterKey] = element.value;
-                    }
+            if (element && element.value) {
+                filters[filterKey] = element.value;
+            }
+        });
+
+        // Handle multi-select checkboxes
+        const multiSelectMappings = {
+            'brokerFilter': 'broker',
+            'symbolFilter': 'symbol',
+            'transactionTypeFilter': 'transaction_type'
+        };
+
+        Object.entries(multiSelectMappings).forEach(([containerId, filterKey]) => {
+            const container = document.getElementById(containerId);
+            if (container) {
+                const checkedBoxes = container.querySelectorAll('input[type="checkbox"]:checked');
+                const selectedValues = Array.from(checkedBoxes).map(checkbox => checkbox.value);
+                
+                if (selectedValues.length > 0) {
+                    filters[filterKey] = selectedValues;
                 }
             }
         });
@@ -588,25 +693,6 @@ class PortfolioDashboard {
         return date.toLocaleDateString('zh-TW');
     }
 
-    // Update selection count for multi-select dropdowns
-    updateSelectionCount(selectId) {
-        const select = document.getElementById(selectId);
-        const countElementId = selectId.replace('Filter', 'Count');
-        const countElement = document.getElementById(countElementId);
-        
-        if (!select || !countElement) return;
-        
-        const selectedCount = Array.from(select.selectedOptions)
-            .filter(option => option.value !== '').length;
-        
-        if (selectedCount > 0) {
-            countElement.style.display = 'block';
-            countElement.querySelector('.badge').textContent = `${selectedCount} selected`;
-        } else {
-            countElement.style.display = 'none';
-        }
-    }
-
     showLoading(show) {
         const loadingElement = document.getElementById('loadingIndicator');
         if (loadingElement) {
@@ -689,23 +775,6 @@ class PortfolioDashboard {
         
         alertsContainer.innerHTML = alertsHTML;
         alertsContainer.style.display = alertsHTML ? 'block' : 'none';
-    }
-}
-
-// Global function for clearing multi-select filters
-function clearMultiSelect(selectId) {
-    const select = document.getElementById(selectId);
-    if (select) {
-        // Clear all selections
-        Array.from(select.options).forEach(option => {
-            option.selected = false;
-        });
-        
-        // Update count display
-        if (window.dashboard) {
-            window.dashboard.updateSelectionCount(selectId);
-            window.dashboard.applyFilters(); // Auto-apply filters after clearing
-        }
     }
 }
 
