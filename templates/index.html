@@ -36,8 +36,9 @@
         .summary-card:hover {
             transform: translateY(-2px);
         }
-        .gain { color: #28a745; }
-        .loss { color: #dc3545; }
+        .gain { color: inherit; } /* Remove green color, use default text color */
+        .loss { color: #198754; } /* Change to a different green tone instead of red */
+        .net-loss { color: #dc3545; } /* New class for NET negative amounts only */
         .table-responsive {
             max-height: 500px;
             overflow-y: auto;
@@ -47,8 +48,8 @@
             text-align: center;
             padding: 2rem;
         }
-        .transaction-type-buy { background-color: #d4edda; }
-        .transaction-type-sell { background-color: #f8d7da; }
+        .transaction-type-buy { background-color: #d4edda; } /* Light green */
+        .transaction-type-sell { background-color: #c8f7c5; } /* Even lighter green instead of red */
         .btn-export {
             margin-left: 0.5rem;
         }

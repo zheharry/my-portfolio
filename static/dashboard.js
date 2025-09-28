@@ -225,13 +225,13 @@ class PortfolioDashboard {
             row.innerHTML = `
                 <td>${this.formatDate(transaction.transaction_date)}</td>
                 <td><strong>${transaction.symbol || '-'}</strong></td>
-                <td><span class="badge ${transaction.transaction_type === '買進' ? 'bg-success' : 'bg-danger'}">${transaction.transaction_type}</span></td>
+                <td><span class="badge ${transaction.transaction_type === '買進' ? 'bg-success' : 'bg-success'}">${transaction.transaction_type}</span></td>
                 <td>${this.formatNumber(transaction.quantity)}</td>
                 <td>$${this.formatNumber(transaction.price)}</td>
                 <td>$${this.formatNumber(Math.abs(transaction.amount))}</td>
                 <td><span class="text-warning">$${this.formatNumber(transaction.fee)}</span></td>
                 <td><span class="text-info">$${this.formatNumber(transaction.tax)}</span></td>
-                <td class="${transaction.net_amount >= 0 ? 'gain' : 'loss'}">$${this.formatNumber(transaction.net_amount)}</td>
+                <td class="${transaction.net_amount >= 0 ? 'gain' : 'loss'}">${this.formatNetAmount(transaction.net_amount)}</td>
                 <td><span class="badge bg-secondary">${transaction.broker}</span></td>
                 <td><small>${transaction.order_id || ''}</small></td>
             `;
@@ -246,14 +246,14 @@ class PortfolioDashboard {
         
         const realizedPL = summary.realized_gain_loss || 0;
         const realizedPLElement = document.getElementById('realizedPL');
-        realizedPLElement.textContent = `$${this.formatNumber(realizedPL)}`;
+        realizedPLElement.innerHTML = this.formatNetAmount(realizedPL);
         realizedPLElement.className = realizedPL >= 0 ? 'gain' : 'loss';
         
         document.getElementById('totalFees').textContent = `$${this.formatNumber(summary.total_fees || 0)}`;
         
         const netProfit = summary.net_after_fees || 0;
         const netProfitElement = document.getElementById('netProfit');
-        netProfitElement.textContent = `$${this.formatNumber(netProfit)}`;
+        netProfitElement.innerHTML = this.formatNetAmount(netProfit);
         netProfitElement.className = netProfit >= 0 ? 'gain' : 'loss';
     }
 
@@ -294,7 +294,7 @@ class PortfolioDashboard {
                     </div>
                     <div class="col-md-2">
                         <small>淨收益</small><br>
-                        <strong class="${gainLossClass}">$${this.formatNumber(netGainLoss)}</strong>
+                        <strong class="${gainLossClass}">${this.formatNetAmount(netGainLoss)}</strong>
                     </div>
                 </div>
             `;
@@ -502,6 +502,19 @@ class PortfolioDashboard {
             minimumFractionDigits: 0, 
             maximumFractionDigits: 2 
         });
+    }
+
+    formatNetAmount(num) {
+        if (num === null || num === undefined) return '$0';
+        const formatted = parseFloat(num).toLocaleString('en-US', { 
+            minimumFractionDigits: 0, 
+            maximumFractionDigits: 2 
+        });
+        
+        if (num < 0) {
+            return `<span class="net-loss">-$${formatted.replace('-', '')}</span>`;
+        }
+        return `$${formatted}`;
     }
 
     formatDate(dateStr) {
