@@ -315,7 +315,18 @@
                 <div class="card summary-card">
                     <div class="card-body text-center">
                         <h5 class="card-title">已實現損益 (Realized P&L)</h5>
+                        <h6 class="text-muted">僅已賣出部位 (Sold positions only)</h6>
                         <h3 id="realizedPL">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">未實現損益 (Unrealized P&L)</h5>
+                        <h6 class="text-muted">目前持股 (Current holdings)</h6>
+                        <h3 id="unrealizedPL">$0</h3>
+                        <small class="text-muted">基於最新收盤價 (Based on latest closing prices)</small>
                     </div>
                 </div>
             </div>
@@ -327,11 +338,42 @@
                     </div>
                 </div>
             </div>
+        </div>
+
+        <!-- Second Row of Summary Cards -->
+        <div class="row mb-4">
             <div class="col-md-3">
                 <div class="card summary-card">
                     <div class="card-body text-center">
                         <h5 class="card-title">淨收益 (Net Profit)</h5>
                         <h3 id="netProfit">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">持股市值 (Market Value)</h5>
+                        <h6 class="text-muted">目前持股總值 (Current holdings value)</h6>
+                        <h3 class="text-info" id="marketValue">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">持股成本 (Cost Basis)</h5>
+                        <h6 class="text-muted">目前持股成本 (Current holdings cost)</h6>
+                        <h3 class="text-secondary" id="costBasis">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">持股數量 (Holdings Count)</h5>
+                        <h6 class="text-muted">不同標的數量 (Number of symbols)</h6>
+                        <h3 class="text-dark" id="holdingsCount">0</h3>
                     </div>
                 </div>
             </div>

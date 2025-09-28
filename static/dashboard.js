@@ -500,6 +500,63 @@ class PortfolioDashboard {
         const netProfitElement = document.getElementById('netProfit');
         netProfitElement.innerHTML = this.formatNetAmount(netProfit, 'NTD');
         netProfitElement.className = netProfit >= 0 ? 'gain' : 'loss';
+        
+        // Load unrealized P&L data
+        this.loadUnrealizedPnL();
+    }
+
+    // Load unrealized P&L data
+    async loadUnrealizedPnL() {
+        try {
+            const params = new URLSearchParams();
+            
+            // Handle filters, including arrays
+            Object.entries(this.currentFilters).forEach(([key, value]) => {
+                if (Array.isArray(value)) {
+                    // For arrays, add each value separately
+                    value.forEach(v => params.append(key, v));
+                } else {
+                    params.append(key, value);
+                }
+            });
+            
+            const unrealizedData = await this.fetchAPI(`/api/unrealized-pnl?${params}`);
+            this.updateUnrealizedPnLCards(unrealizedData);
+        } catch (error) {
+            console.error('Error loading unrealized P&L:', error);
+            // Set default values on error
+            this.updateUnrealizedPnLCards({
+                unrealized_pnl: 0,
+                total_market_value: 0,
+                total_cost_basis: 0,
+                holdings_count: 0,
+                price_fetch_errors: []
+            });
+        }
+    }
+
+    // Update unrealized P&L cards
+    updateUnrealizedPnLCards(data) {
+        // Update unrealized P&L
+        const unrealizedPL = data.unrealized_pnl || 0;
+        const unrealizedPLElement = document.getElementById('unrealizedPL');
+        unrealizedPLElement.innerHTML = this.formatNetAmount(unrealizedPL, 'NTD');
+        unrealizedPLElement.className = unrealizedPL >= 0 ? 'gain' : 'loss';
+        
+        // Update market value
+        document.getElementById('marketValue').textContent = `NT$${this.formatNumber(data.total_market_value || 0)}`;
+        
+        // Update cost basis
+        document.getElementById('costBasis').textContent = `NT$${this.formatNumber(data.total_cost_basis || 0)}`;
+        
+        // Update holdings count
+        document.getElementById('holdingsCount').textContent = data.holdings_count || 0;
+        
+        // Show warning for price fetch errors if any
+        if (data.price_fetch_errors && data.price_fetch_errors.length > 0) {
+            console.warn('Failed to fetch prices for symbols:', data.price_fetch_errors);
+            // You could add a visual indicator here for price fetch failures
+        }
     }
 
     // Update performance display

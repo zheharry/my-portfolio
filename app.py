@@ -543,8 +543,8 @@ class PortfolioAPI:
                 elif net_amount_ntd < 0 and symbol is None:  # Withdrawal
                     total_withdrawals_ntd += abs(net_amount_ntd)
             
-            # Calculate derived metrics
-            realized_gain_loss_ntd = total_sales_ntd - total_purchases_ntd
+            # Calculate CORRECTED realized P&L (only from sold quantities)
+            realized_gain_loss_ntd = self._calculate_true_realized_pnl(filters)
             net_after_fees_ntd = realized_gain_loss_ntd - total_fees_ntd - total_taxes_ntd
             
             return {
@@ -560,6 +560,186 @@ class PortfolioAPI:
                 'net_after_fees': net_after_fees_ntd
             }
     
+    def _calculate_true_realized_pnl(self, filters=None):
+        """Calculate true realized P&L from only SOLD quantities using matched buy/sell pairs"""
+        # Broker mapping for filtering
+        broker_mapping = {
+            '國泰證券': 'CATHAY',
+            'Charles Schwab': 'SCHWAB', 
+            'TD Ameritrade': 'TDA'
+        }
+        
+        # Get position analysis query - same as portfolio_performance_analysis
+        positions_query = """
+            SELECT 
+                t.symbol,
+                t.broker,
+                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.quantity ELSE 0 END) as total_bought,
+                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.quantity ELSE 0 END) as total_sold,
+                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN ABS(t.net_amount) ELSE 0 END) as total_invested,
+                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.net_amount ELSE 0 END) as total_received,
+                t.currency
+            FROM transactions t
+            WHERE t.symbol IS NOT NULL AND t.symbol != ''
+        """
+        
+        # Apply filters
+        params = []
+        if filters:
+            # Handle multi-select broker filter
+            if filters.get('broker'):
+                broker_filter = filters['broker']
+                if isinstance(broker_filter, list) and len(broker_filter) > 0:
+                    short_names = [broker_mapping.get(broker, broker) for broker in broker_filter]
+                    placeholders = ','.join(['?' for _ in short_names])
+                    positions_query += f" AND t.broker IN ({placeholders})"
+                    params.extend(short_names)
+                elif isinstance(broker_filter, str):
+                    short_name = broker_mapping.get(broker_filter, broker_filter)
+                    positions_query += " AND t.broker = ?"
+                    params.append(short_name)
+        
+        positions_query += " GROUP BY t.symbol, t.broker, t.currency ORDER BY t.symbol"
+        
+        total_realized_gain_loss_ntd = 0
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(positions_query, params)
+            positions_data = cursor.fetchall()
+            
+            for row in positions_data:
+                symbol, broker, bought, sold, invested, received, currency = row
+                
+                # Only calculate realized P&L for sold quantities
+                if sold > 0:
+                    # Calculate realized gain/loss: received from sales minus cost basis of sold shares
+                    cost_of_sold_shares = invested * (sold / bought) if bought > 0 else 0
+                    realized_gain_loss = received - cost_of_sold_shares
+                    
+                    # Convert to NTD
+                    realized_gain_loss_ntd = self.convert_to_ntd(realized_gain_loss, currency or 'NTD')
+                    total_realized_gain_loss_ntd += realized_gain_loss_ntd
+        
+        return total_realized_gain_loss_ntd
+
+    def _get_current_holdings(self, filters=None):
+        """Get current holdings (bought - sold quantities > 0)"""
+        # Broker mapping for filtering
+        broker_mapping = {
+            '國泰證券': 'CATHAY',
+            'Charles Schwab': 'SCHWAB', 
+            'TD Ameritrade': 'TDA'
+        }
+        
+        holdings_query = """
+            SELECT 
+                t.symbol,
+                t.broker,
+                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.quantity ELSE 0 END) as bought_qty,
+                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN ABS(t.quantity) ELSE 0 END) as sold_qty,
+                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.quantity 
+                         WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN -ABS(t.quantity) ELSE 0 END) as current_holding,
+                AVG(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.price ELSE NULL END) as avg_cost,
+                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN ABS(t.net_amount) ELSE 0 END) as total_invested,
+                t.currency
+            FROM transactions t 
+            WHERE t.symbol IS NOT NULL AND t.symbol != ''
+        """
+        
+        # Apply filters  
+        params = []
+        if filters:
+            if filters.get('broker'):
+                broker_filter = filters['broker']
+                if isinstance(broker_filter, list) and len(broker_filter) > 0:
+                    short_names = [broker_mapping.get(broker, broker) for broker in broker_filter]
+                    placeholders = ','.join(['?' for _ in short_names])
+                    holdings_query += f" AND t.broker IN ({placeholders})"
+                    params.extend(short_names)
+                elif isinstance(broker_filter, str):
+                    short_name = broker_mapping.get(broker_filter, broker_filter)
+                    holdings_query += " AND t.broker = ?"
+                    params.append(short_name)
+        
+        holdings_query += " GROUP BY t.symbol, t.broker, t.currency HAVING current_holding > 0"
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(holdings_query, params)
+            return cursor.fetchall()
+
+    def _get_current_prices(self, symbols):
+        """Fetch current prices for symbols from Yahoo Finance"""
+        import yfinance as yf
+        
+        prices = {}
+        for symbol in symbols:
+            try:
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period="1d")
+                if not hist.empty:
+                    prices[symbol] = hist['Close'].iloc[-1]
+                else:
+                    prices[symbol] = None
+            except Exception as e:
+                print(f"Error fetching price for {symbol}: {e}")
+                prices[symbol] = None
+        return prices
+
+    def calculate_unrealized_pnl(self, filters=None):
+        """Calculate unrealized P&L for current holdings using Yahoo Finance prices"""
+        holdings = self._get_current_holdings(filters)
+        
+        if not holdings:
+            return {
+                'unrealized_pnl': 0,
+                'total_market_value': 0,
+                'total_cost_basis': 0,
+                'holdings_count': 0,
+                'price_fetch_errors': []
+            }
+        
+        # Get unique symbols for price fetching
+        symbols = list(set([holding[0] for holding in holdings]))  # symbol is first column
+        current_prices = self._get_current_prices(symbols)
+        
+        total_unrealized_pnl_ntd = 0
+        total_market_value_ntd = 0
+        total_cost_basis_ntd = 0
+        price_fetch_errors = []
+        
+        for holding in holdings:
+            symbol, broker, bought_qty, sold_qty, current_holding, avg_cost, total_invested, currency = holding
+            
+            current_price = current_prices.get(symbol)
+            if current_price is None:
+                price_fetch_errors.append(symbol)
+                # Use avg cost as fallback
+                current_price = avg_cost or 0
+            
+            # Calculate cost basis for remaining shares
+            cost_basis = (total_invested * (current_holding / bought_qty)) if bought_qty > 0 else 0
+            market_value = current_holding * current_price
+            
+            # Convert to NTD
+            cost_basis_ntd = self.convert_to_ntd(cost_basis, currency or 'NTD')
+            market_value_ntd = self.convert_to_ntd(market_value, currency or 'NTD')
+            
+            unrealized_pnl_ntd = market_value_ntd - cost_basis_ntd
+            
+            total_unrealized_pnl_ntd += unrealized_pnl_ntd
+            total_market_value_ntd += market_value_ntd
+            total_cost_basis_ntd += cost_basis_ntd
+        
+        return {
+            'unrealized_pnl': total_unrealized_pnl_ntd,
+            'total_market_value': total_market_value_ntd,
+            'total_cost_basis': total_cost_basis_ntd,
+            'holdings_count': len(holdings),
+            'price_fetch_errors': price_fetch_errors
+        }
+
     def get_portfolio_performance_analysis(self, filters=None):
         """Get portfolio performance analysis distinguishing between cash flow and investment performance"""
         # Broker mapping for filtering
@@ -995,6 +1175,28 @@ def api_data_freshness_report():
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+@app.route('/api/unrealized-pnl')
+def api_unrealized_pnl():
+    """Calculate unrealized P&L for current holdings"""
+    try:
+        # Get filters from request parameters
+        filters = {}
+        if request.args.get('broker'):
+            broker_list = request.args.getlist('broker')
+            filters['broker'] = broker_list if len(broker_list) > 1 else broker_list[0] if broker_list else None
+        
+        result = portfolio_api.calculate_unrealized_pnl(filters)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'unrealized_pnl': 0,
+            'total_market_value': 0,
+            'total_cost_basis': 0,
+            'holdings_count': 0,
+            'price_fetch_errors': []
         }), 500
 
 if __name__ == '__main__':
