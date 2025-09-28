@@ -482,11 +482,13 @@ class PortfolioDashboard {
             this.performanceChart.destroy();
         }
 
-        const labels = performance.map(p => p.year + '年');
-        const purchases = performance.map(p => p.purchases || 0);
-        const sales = performance.map(p => p.sales || 0);
-        const fees = performance.map(p => p.fees || 0);
-        const netGains = performance.map(p => p.net_after_fees || 0);
+        // Reverse the data arrays to show 2025 on the right (ascending order for chart display)
+        const reversedPerformance = performance.slice().reverse();
+        const labels = reversedPerformance.map(p => p.year + '年');
+        const purchases = reversedPerformance.map(p => p.purchases || 0);
+        const sales = reversedPerformance.map(p => p.sales || 0);
+        const fees = reversedPerformance.map(p => p.fees || 0);
+        const netGains = reversedPerformance.map(p => p.net_after_fees || 0);
 
         this.performanceChart = new Chart(ctx, {
             type: 'bar',
