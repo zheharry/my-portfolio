@@ -543,9 +543,16 @@ class PortfolioAPI:
                 elif net_amount_ntd < 0 and symbol is None:  # Withdrawal
                     total_withdrawals_ntd += abs(net_amount_ntd)
             
-            # Calculate CORRECTED realized P&L (only from sold quantities)
+            # Calculate CORRECTED realized P&L (only from sold quantities) 
             realized_gain_loss_ntd = self._calculate_true_realized_pnl(filters)
             net_after_fees_ntd = realized_gain_loss_ntd - total_fees_ntd - total_taxes_ntd
+            
+            # Get detailed breakdown of realized P&L by symbol
+            realized_pnl_breakdown = self._get_realized_pnl_breakdown(filters)
+            
+            # Calculate alternative P&L views
+            current_holdings_realized_pnl = sum([item['realized_pnl_ntd'] for item in realized_pnl_breakdown if item['remaining_shares'] > 0])
+            closed_positions_realized_pnl = sum([item['realized_pnl_ntd'] for item in realized_pnl_breakdown if item['remaining_shares'] == 0])
             
             return {
                 'total_sales': total_sales_ntd,
@@ -557,7 +564,13 @@ class PortfolioAPI:
                 'total_withdrawals': total_withdrawals_ntd,
                 'total_transactions': total_transactions,
                 'realized_gain_loss': realized_gain_loss_ntd,
-                'net_after_fees': net_after_fees_ntd
+                'net_after_fees': net_after_fees_ntd,
+                'realized_pnl_breakdown': realized_pnl_breakdown,
+                'alternative_views': {
+                    'current_holdings_realized_pnl': current_holdings_realized_pnl,
+                    'closed_positions_realized_pnl': closed_positions_realized_pnl,
+                    'explanation': 'current_holdings_realized_pnl includes only gains from stocks still held; closed_positions_realized_pnl includes gains from fully sold positions'
+                }
             }
     
     def _calculate_true_realized_pnl(self, filters=None):
@@ -598,6 +611,17 @@ class PortfolioAPI:
                     short_name = broker_mapping.get(broker_filter, broker_filter)
                     positions_query += " AND t.broker = ?"
                     params.append(short_name)
+            
+            # Handle multi-select symbol filter - FIXED: This was missing!
+            if filters.get('symbol'):
+                symbol_filter = filters['symbol']
+                if isinstance(symbol_filter, list) and len(symbol_filter) > 0:
+                    placeholders = ','.join(['?' for _ in symbol_filter])
+                    positions_query += f" AND t.symbol IN ({placeholders})"
+                    params.extend(symbol_filter)
+                elif isinstance(symbol_filter, str):
+                    positions_query += " AND t.symbol = ?"
+                    params.append(symbol_filter)
         
         positions_query += " GROUP BY t.symbol, t.broker, t.currency ORDER BY t.symbol"
         
@@ -622,6 +646,86 @@ class PortfolioAPI:
                     total_realized_gain_loss_ntd += realized_gain_loss_ntd
         
         return total_realized_gain_loss_ntd
+        
+    def _get_realized_pnl_breakdown(self, filters=None):
+        """Get detailed breakdown of realized P&L by symbol"""
+        # Broker mapping for filtering
+        broker_mapping = {
+            '國泰證券': 'CATHAY',
+            'Charles Schwab': 'SCHWAB', 
+            'TD Ameritrade': 'TDA'
+        }
+        
+        # Get position analysis query
+        positions_query = """
+            SELECT 
+                t.symbol,
+                t.broker,
+                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.quantity ELSE 0 END) as total_bought,
+                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.quantity ELSE 0 END) as total_sold,
+                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN ABS(t.net_amount) ELSE 0 END) as total_invested,
+                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.net_amount ELSE 0 END) as total_received,
+                t.currency
+            FROM transactions t
+            WHERE t.symbol IS NOT NULL AND t.symbol != ''
+        """
+        
+        # Apply filters
+        params = []
+        if filters:
+            # Handle multi-select broker filter
+            if filters.get('broker'):
+                broker_filter = filters['broker']
+                if isinstance(broker_filter, list) and len(broker_filter) > 0:
+                    short_names = [broker_mapping.get(broker, broker) for broker in broker_filter]
+                    placeholders = ','.join(['?' for _ in short_names])
+                    positions_query += f" AND t.broker IN ({placeholders})"
+                    params.extend(short_names)
+                elif isinstance(broker_filter, str):
+                    short_name = broker_mapping.get(broker_filter, broker_filter)
+                    positions_query += " AND t.broker = ?"
+                    params.append(short_name)
+        
+        positions_query += " GROUP BY t.symbol, t.broker, t.currency ORDER BY t.symbol"
+        
+        breakdown = []
+        
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(positions_query, params)
+            positions_data = cursor.fetchall()
+            
+            for row in positions_data:
+                symbol, broker, bought, sold, invested, received, currency = row
+                
+                # Only include positions that have been sold
+                if sold > 0:
+                    # Calculate realized gain/loss: received from sales minus cost basis of sold shares
+                    cost_of_sold_shares = invested * (sold / bought) if bought > 0 else 0
+                    realized_gain_loss = received - cost_of_sold_shares
+                    
+                    # Convert to NTD
+                    realized_gain_loss_ntd = self.convert_to_ntd(realized_gain_loss, currency or 'NTD')
+                    
+                    # Calculate if this position is still held or completely sold
+                    remaining_shares = bought - sold
+                    
+                    breakdown.append({
+                        'symbol': symbol,
+                        'broker': broker,
+                        'total_bought': bought,
+                        'total_sold': sold,
+                        'remaining_shares': remaining_shares,
+                        'total_invested': invested,
+                        'total_received': received,
+                        'cost_of_sold_shares': cost_of_sold_shares,
+                        'realized_pnl': realized_gain_loss,
+                        'realized_pnl_ntd': realized_gain_loss_ntd,
+                        'currency': currency,
+                        'position_status': 'CLOSED' if remaining_shares == 0 else 'PARTIAL'
+                    })
+        
+        return breakdown
 
     def _get_current_holdings(self, filters=None):
         """Get current holdings (bought - sold quantities > 0)"""
@@ -1221,6 +1325,40 @@ def api_unrealized_pnl():
             'total_cost_basis': 0,
             'holdings_count': 0,
             'price_fetch_errors': []
+        }), 500
+
+@app.route('/api/realized-pnl-breakdown')
+def api_realized_pnl_breakdown():
+    """Get detailed breakdown of realized P&L by symbol"""
+    try:
+        filters = {
+            'broker': request.args.getlist('broker'),
+            'symbol': request.args.getlist('symbol'),
+            'year': request.args.get('year'),
+            'start_date': request.args.get('start_date'),
+            'end_date': request.args.get('end_date'),
+        }
+        
+        # Remove None values and empty lists
+        filters = {k: v for k, v in filters.items() if v and (not isinstance(v, list) or len(v) > 0)}
+        
+        api = PortfolioAPI()
+        breakdown = api._get_realized_pnl_breakdown(filters)
+        
+        return jsonify({
+            'success': True,
+            'breakdown': breakdown,
+            'summary': {
+                'total_positions_with_sales': len(breakdown),
+                'positions_still_held': len([p for p in breakdown if p['position_status'] == 'PARTIAL']),
+                'positions_closed': len([p for p in breakdown if p['position_status'] == 'CLOSED']),
+                'total_realized_pnl_ntd': sum([p['realized_pnl_ntd'] for p in breakdown])
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500
 
 if __name__ == '__main__':
