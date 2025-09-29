@@ -532,9 +532,9 @@ class PortfolioAPI:
                 total_taxes_ntd += tax_ntd
                 
                 # Categorize by transaction type
-                if transaction_type == '賣出':
+                if transaction_type == 'SELL':
                     total_sales_ntd += net_amount_ntd
-                elif transaction_type == '買進':
+                elif transaction_type == 'BUY':
                     total_purchases_ntd += abs(net_amount_ntd)
                 elif transaction_type == 'DIVIDEND':
                     total_dividends_ntd += net_amount_ntd
@@ -882,12 +882,12 @@ class PortfolioAPI:
             SELECT 
                 t.symbol,
                 t.broker,
-                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.quantity ELSE 0 END) as total_bought,
-                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.quantity ELSE 0 END) as total_sold,
-                SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN ABS(t.net_amount) ELSE 0 END) as total_invested,
-                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.net_amount ELSE 0 END) as total_received,
-                AVG(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.price ELSE NULL END) as avg_buy_price,
-                AVG(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.price ELSE NULL END) as avg_sell_price
+                SUM(CASE WHEN t.transaction_type = 'BUY' THEN t.quantity ELSE 0 END) as total_bought,
+                SUM(CASE WHEN t.transaction_type = 'SELL' THEN t.quantity ELSE 0 END) as total_sold,
+                SUM(CASE WHEN t.transaction_type = 'BUY' THEN ABS(t.net_amount) ELSE 0 END) as total_invested,
+                SUM(CASE WHEN t.transaction_type = 'SELL' THEN t.net_amount ELSE 0 END) as total_received,
+                AVG(CASE WHEN t.transaction_type = 'BUY' THEN t.price ELSE NULL END) as avg_buy_price,
+                AVG(CASE WHEN t.transaction_type = 'SELL' THEN t.price ELSE NULL END) as avg_sell_price
             FROM transactions t
             WHERE t.symbol IS NOT NULL AND t.symbol != ''
         """
@@ -895,8 +895,8 @@ class PortfolioAPI:
         # Cash flow analysis query
         cash_flow_query = """
             SELECT 
-                SUM(CASE WHEN transaction_type = '賣出' OR transaction_type = 'SELL' THEN net_amount ELSE 0 END) as total_sales_proceeds,
-                SUM(CASE WHEN transaction_type = '買進' OR transaction_type = 'BUY' THEN ABS(net_amount) ELSE 0 END) as total_purchase_cost,
+                SUM(CASE WHEN transaction_type = 'SELL' THEN net_amount ELSE 0 END) as total_sales_proceeds,
+                SUM(CASE WHEN transaction_type = 'BUY' THEN ABS(net_amount) ELSE 0 END) as total_purchase_cost,
                 SUM(CASE WHEN transaction_type = 'DIVIDEND' THEN net_amount ELSE 0 END) as total_dividends,
                 SUM(CASE WHEN net_amount > 0 AND symbol IS NULL THEN net_amount ELSE 0 END) as total_deposits,
                 SUM(CASE WHEN net_amount < 0 AND symbol IS NULL THEN ABS(net_amount) ELSE 0 END) as total_withdrawals,
@@ -1016,8 +1016,8 @@ class PortfolioAPI:
         query = """
             SELECT 
                 strftime('%Y', transaction_date) as year,
-                SUM(CASE WHEN transaction_type = '買進' THEN ABS(net_amount) ELSE 0 END) as purchases,
-                SUM(CASE WHEN transaction_type = '賣出' THEN net_amount ELSE 0 END) as sales,
+                SUM(CASE WHEN transaction_type = 'BUY' THEN ABS(net_amount) ELSE 0 END) as purchases,
+                SUM(CASE WHEN transaction_type = 'SELL' THEN net_amount ELSE 0 END) as sales,
                 SUM(CASE WHEN transaction_type = 'DIVIDEND' THEN net_amount ELSE 0 END) as dividends,
                 SUM(fee) as fees,
                 SUM(tax) as taxes,

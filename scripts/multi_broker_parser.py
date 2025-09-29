@@ -208,17 +208,17 @@ class MultiBrokerPortfolioParser:
     def standardize_transaction_amount(self, transaction: Dict) -> None:
         """
         Standardize transaction amounts based on transaction type from a cash flow perspective:
-        - Negative amounts (cash going out): BUY, 買進, WITHDRAWAL, TAX
-        - Positive amounts (cash coming in): SELL, 賣出, DEPOSIT, DIVIDEND, INTEREST, JOURNAL, OTHER
+        - Negative amounts (cash going out): BUY, WITHDRAWAL, TAX
+        - Positive amounts (cash coming in): SELL, DEPOSIT, DIVIDEND, INTEREST, JOURNAL, OTHER
         """
         transaction_type = transaction.get('transaction_type', '')
         amount = transaction.get('amount', 0)
         
         # Define transaction types that should have negative amounts (cash going out)
-        negative_types = {'BUY', '買進', 'WITHDRAWAL', 'TAX'}
+        negative_types = {'BUY', 'WITHDRAWAL', 'TAX'}
         
         # Define transaction types that should have positive amounts (cash coming in)
-        positive_types = {'SELL', '賣出', 'DEPOSIT', 'DIVIDEND', 'INTEREST', 'JOURNAL', 'OTHER'}
+        positive_types = {'SELL', 'DEPOSIT', 'DIVIDEND', 'INTEREST', 'JOURNAL', 'OTHER'}
         
         if transaction_type in negative_types:
             transaction['amount'] = -abs(amount)
@@ -986,7 +986,7 @@ class MultiBrokerPortfolioParser:
                     net_amount_str = str(row.get('淨收付金額', '0')).replace(',', '').replace('"', '')
                     net_amount = float(net_amount_str) if net_amount_str and net_amount_str != 'nan' else 0
                     
-                    transaction_type = '買進' if '現買' in str(row.get('買賣別', '')) else '賣出'
+                    transaction_type = 'BUY' if '現買' in str(row.get('買賣別', '')) else 'SELL'
                     price = float(str(row.get('成交價', '0')).replace(',', '')) if row.get('成交價') else 0
                     cost = float(str(row.get('成本', '0')).replace(',', '')) if row.get('成本') else 0
                     fee = float(str(row.get('手續費', '0')).replace(',', '')) if pd.notna(row.get('手續費')) else 0
