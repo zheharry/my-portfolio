@@ -532,6 +532,12 @@ class PortfolioDashboard {
         netProfitElement.innerHTML = this.formatNetAmount(netProfit, 'NTD');
         netProfitElement.className = netProfit >= 0 ? 'gain' : 'loss';
         
+        // Update True Cash Earnings
+        const trueCashEarnings = summary.true_cash_earnings || 0;
+        const trueCashEarningsElement = document.getElementById('trueCashEarnings');
+        trueCashEarningsElement.innerHTML = this.formatNetAmount(trueCashEarnings, 'NTD');
+        trueCashEarningsElement.className = trueCashEarnings >= 0 ? 'text-success' : 'net-loss';
+        
         // Load unrealized P&L data
         this.loadUnrealizedPnL();
     }

@@ -12,6 +12,11 @@ app = Flask(__name__)
 class PortfolioAPI:
     def __init__(self, db_path="data/database/portfolio.db"):
         self.db_path = db_path
+        # Add caching for exchange rates and stock prices
+        self._forex_cache = {}
+        self._stock_price_cache = {}
+        self._cache_timestamp = None
+        self._cache_duration = 300  # 5 minutes cache duration
         self.ensure_database_exists()
     
     def ensure_database_exists(self):
@@ -338,21 +343,83 @@ class PortfolioAPI:
             cursor.execute("SELECT DISTINCT currency FROM transactions WHERE currency IS NOT NULL ORDER BY currency")
             return [row[0] for row in cursor.fetchall()]
     
+    def _is_cache_valid(self):
+        """Check if cache is still valid"""
+        if self._cache_timestamp is None:
+            return False
+        
+        import time
+        return (time.time() - self._cache_timestamp) < self._cache_duration
+    
+    def get_forex_rate(self, from_currency, to_currency):
+        """Get forex rates from Yahoo Finance with caching"""
+        if from_currency == to_currency:
+            return 1.0
+        
+        # Create cache key
+        cache_key = f"{from_currency}_{to_currency}"
+        
+        # Check cache first
+        if self._is_cache_valid() and cache_key in self._forex_cache:
+            return self._forex_cache[cache_key]
+        
+        # Clear cache if invalid
+        if not self._is_cache_valid():
+            self._forex_cache.clear()
+            self._stock_price_cache.clear()
+        
+        # Yahoo Finance forex symbols
+        forex_mapping = {
+            ('USD', 'TWD'): 'USDTWD=X',
+            ('TWD', 'USD'): 'TWDUSD=X',
+            ('USD', 'NTD'): 'USDTWD=X',  # NTD and TWD are the same
+            ('NTD', 'USD'): 'TWDUSD=X'
+        }
+        
+        forex_symbol = forex_mapping.get((from_currency, to_currency))
+        rate = None
+        
+        if forex_symbol:
+            try:
+                import yfinance as yf
+                ticker = yf.Ticker(forex_symbol)
+                hist = ticker.history(period="1d")
+                if not hist.empty:
+                    rate = hist['Close'].iloc[-1]
+            except Exception as e:
+                print(f"Error fetching forex rate {from_currency}/{to_currency}: {e}")
+        
+        # Use fallback rates if Yahoo Finance fails
+        if rate is None:
+            fallback_rates = {
+                ('USD', 'TWD'): 31.5,
+                ('USD', 'NTD'): 31.5,
+                ('TWD', 'USD'): 1/31.5,
+                ('NTD', 'USD'): 1/31.5
+            }
+            rate = fallback_rates.get((from_currency, to_currency), 1.0)
+        
+        # Cache the result
+        self._forex_cache[cache_key] = rate
+        
+        # Update cache timestamp
+        if self._cache_timestamp is None:
+            import time
+            self._cache_timestamp = time.time()
+        
+        return rate
+
     def convert_to_ntd(self, amount, from_currency):
-        """Convert amount to NTD using fixed exchange rate"""
+        """Convert amount to NTD using real-time or fallback exchange rate"""
         if amount is None:
             return 0
         
-        # Fixed exchange rate USD to NTD (you can make this configurable later)
-        usd_to_ntd_rate = 32.0  # Approximate rate
+        if from_currency == 'NTD':
+            return amount
         
-        if from_currency == 'USD':
-            return amount * usd_to_ntd_rate
-        elif from_currency == 'NTD':
-            return amount
-        else:
-            # Default to treating as NTD if currency is unknown
-            return amount
+        # Get real-time exchange rate
+        rate = self.get_forex_rate(from_currency, 'NTD')
+        return amount * rate
     
     def _apply_broker_filter(self, query, params, filters, use_account_join=False):
         """Apply broker filter with proper handling of name mapping"""
@@ -674,6 +741,15 @@ class PortfolioAPI:
             current_holdings_realized_pnl = sum([item['realized_pnl_ntd'] for item in realized_pnl_breakdown if item['remaining_shares'] > 0])
             closed_positions_realized_pnl = sum([item['realized_pnl_ntd'] for item in realized_pnl_breakdown if item['remaining_shares'] == 0])
             
+            # Calculate unrealized P&L for current holdings
+            unrealized_pnl_data = self.calculate_unrealized_pnl(filters)
+            unrealized_pnl_ntd = unrealized_pnl_data.get('unrealized_pnl', 0)
+            
+            # Calculate True Cash Earnings
+            # True Cash Earnings = Net Profit + Unrealized P&L + Dividends - Net Cash Invested  
+            net_cash_invested = total_deposits_ntd - total_withdrawals_ntd
+            true_cash_earnings = net_after_fees_ntd + unrealized_pnl_ntd + total_dividends_ntd - net_cash_invested
+            
             return {
                 'total_sales': total_sales_ntd,
                 'total_purchases': total_purchases_ntd,
@@ -685,6 +761,9 @@ class PortfolioAPI:
                 'total_transactions': total_transactions,
                 'realized_gain_loss': realized_gain_loss_ntd,
                 'net_after_fees': net_after_fees_ntd,
+                'unrealized_pnl': unrealized_pnl_ntd,
+                'net_cash_invested': net_cash_invested,
+                'true_cash_earnings': true_cash_earnings,
                 'realized_pnl_breakdown': realized_pnl_breakdown,
                 'alternative_views': {
                     'current_holdings_realized_pnl': current_holdings_realized_pnl,
@@ -943,12 +1022,134 @@ class PortfolioAPI:
             cursor.execute(holdings_query, params)
             return cursor.fetchall()
 
-    def _get_current_prices(self, symbols):
-        """Fetch current prices for symbols from Yahoo Finance with improved Taiwan stock support"""
+    def _get_current_prices_enhanced(self, symbols_with_brokers):
+        """Fetch current prices for symbols with enhanced Yahoo Finance integration and caching"""
         import yfinance as yf
         
         prices = {}
+        errors = []
+        symbols_to_fetch = []
+        
+        # Clear cache if invalid
+        if not self._is_cache_valid():
+            self._stock_price_cache.clear()
+            self._forex_cache.clear()
+        
+        # Check cache first for each symbol
+        for symbol_info in symbols_with_brokers:
+            if isinstance(symbol_info, tuple):
+                symbol, broker = symbol_info
+            else:
+                symbol = symbol_info
+                broker = None
+            
+            if self._is_cache_valid() and symbol in self._stock_price_cache:
+                cached_price = self._stock_price_cache[symbol]
+                if cached_price is not None:
+                    prices[symbol] = cached_price
+                else:
+                    errors.append(symbol)
+            else:
+                symbols_to_fetch.append(symbol_info)
+        
+        # Fetch only uncached symbols
+        for symbol_info in symbols_to_fetch:
+            if isinstance(symbol_info, tuple):
+                symbol, broker = symbol_info
+            else:
+                symbol = symbol_info
+                broker = None
+            
+            try:
+                # Get enhanced Yahoo symbol
+                yahoo_symbol = self._get_yahoo_symbol(symbol, broker)
+                ticker = yf.Ticker(yahoo_symbol)
+                
+                # Try multiple methods to get price
+                current_price = None
+                
+                # Method 1: Historical data with appropriate period
+                try:
+                    period = "5d" if ".TW" in yahoo_symbol else "1d"
+                    hist = ticker.history(period=period)
+                    
+                    if not hist.empty:
+                        current_price = hist['Close'].iloc[-1]
+                except Exception as e:
+                    print(f"Historical data failed for {yahoo_symbol}: {e}")
+                
+                # Method 2: Try ticker info for real-time price
+                if current_price is None:
+                    try:
+                        info = ticker.info
+                        if info and 'regularMarketPrice' in info and info['regularMarketPrice']:
+                            current_price = info['regularMarketPrice']
+                        elif info and 'previousClose' in info and info['previousClose']:
+                            current_price = info['previousClose']
+                    except Exception as e:
+                        print(f"Ticker info failed for {yahoo_symbol}: {e}")
+                
+                # Method 3: Try fast_info (newer yfinance feature)
+                if current_price is None:
+                    try:
+                        fast_info = ticker.fast_info
+                        if hasattr(fast_info, 'last_price') and fast_info.last_price:
+                            current_price = fast_info.last_price
+                    except Exception as e:
+                        print(f"Fast info failed for {yahoo_symbol}: {e}")
+                
+                if current_price is not None and current_price > 0:
+                    prices[symbol] = current_price
+                    # Cache the result
+                    self._stock_price_cache[symbol] = current_price
+                    # Update cache timestamp
+                    if self._cache_timestamp is None:
+                        import time
+                        self._cache_timestamp = time.time()
+                else:
+                    prices[symbol] = None
+                    # Cache the None result to avoid repeated failed requests
+                    self._stock_price_cache[symbol] = None
+                    errors.append({
+                        'symbol': symbol,
+                        'yahoo_symbol': yahoo_symbol,
+                        'error': 'No price data available'
+                    })
+                    
+            except Exception as e:
+                print(f"Error fetching price for {symbol} ({yahoo_symbol}): {e}")
+                prices[symbol] = None
+                # Cache the None result to avoid repeated failed requests
+                self._stock_price_cache[symbol] = None
+                errors.append({
+                    'symbol': symbol,
+                    'yahoo_symbol': yahoo_symbol if 'yahoo_symbol' in locals() else 'unknown',
+                    'error': str(e)
+                })
+        
+        return prices, errors
+
+    def _get_current_prices(self, symbols):
+        """Legacy method - fetch current prices for symbols from Yahoo Finance with caching"""
+        import yfinance as yf
+        
+        prices = {}
+        symbols_to_fetch = []
+        
+        # Check cache first for each symbol
         for symbol in symbols:
+            if self._is_cache_valid() and symbol in self._stock_price_cache:
+                prices[symbol] = self._stock_price_cache[symbol]
+            else:
+                symbols_to_fetch.append(symbol)
+        
+        # Clear cache if invalid
+        if not self._is_cache_valid():
+            self._stock_price_cache.clear()
+            self._forex_cache.clear()
+        
+        # Fetch only uncached symbols
+        for symbol in symbols_to_fetch:
             try:
                 # Handle different stock markets
                 yahoo_symbol = self._get_yahoo_symbol(symbol)
@@ -961,6 +1162,8 @@ class PortfolioAPI:
                 if not hist.empty:
                     current_price = hist['Close'].iloc[-1]
                     prices[symbol] = current_price
+                    # Cache the result
+                    self._stock_price_cache[symbol] = current_price
                 else:
                     # Try alternative method for Taiwan stocks
                     if ".TW" in yahoo_symbol:
@@ -968,38 +1171,78 @@ class PortfolioAPI:
                             info = ticker.info
                             if info and 'regularMarketPrice' in info:
                                 prices[symbol] = info['regularMarketPrice']
+                                self._stock_price_cache[symbol] = info['regularMarketPrice']
                             else:
                                 prices[symbol] = None
+                                self._stock_price_cache[symbol] = None
                         except:
                             prices[symbol] = None
+                            self._stock_price_cache[symbol] = None
                     else:
                         prices[symbol] = None
+                        self._stock_price_cache[symbol] = None
                     
             except Exception as e:
                 print(f"Error fetching price for {symbol}: {e}")
                 prices[symbol] = None
         return prices
     
-    def _get_yahoo_symbol(self, symbol):
-        """Convert local symbol to Yahoo Finance format - CORRECTED for Taiwan stocks"""
-        # Taiwan stock market symbols - USE TAIWAN EXCHANGE, NOT US ADRs
-        taiwan_symbols = {
-            '台積電': '2330.TW',     # TSMC on Taiwan Stock Exchange - NEVER use TSM ADR
-            '聯發科': '2454.TW',     # MediaTek on Taiwan Stock Exchange  
-            '中鋼': '2002.TW',       # China Steel
-            '富邦台50': '0050.TW',   # Fubon Taiwan 50 ETF
-            '鴻海': '2317.TW'        # Foxconn
-        }
-        
-        # Check if it's a Taiwan stock
-        if symbol in taiwan_symbols:
-            return taiwan_symbols[symbol]
-        
-        # Check if it's already in Taiwan format (numbers only)
+    def _get_yahoo_symbol(self, symbol, broker=None):
+        """Enhanced symbol mapping for all exchanges with comprehensive Taiwan stock support"""
+        # Taiwan stocks - numeric codes (4 digits)
         if symbol.isdigit() and len(symbol) == 4:
             return f"{symbol}.TW"
         
-        # For US stocks, return as-is
+        # Taiwan stocks - Chinese names (comprehensive mapping)
+        taiwan_name_mapping = {
+            '台積電': '2330.TW',     # TSMC
+            '聯發科': '2454.TW',     # MediaTek
+            '鴻海': '2317.TW',       # Foxconn/Hon Hai
+            '中鋼': '2002.TW',       # China Steel
+            '富邦台50': '0050.TW',   # Fubon Taiwan 50 ETF
+            '台塑': '1301.TW',       # Formosa Plastics
+            '台化': '1326.TW',       # Formosa Chemicals
+            '中華電': '2412.TW',     # Chunghwa Telecom
+            '台達電': '2308.TW',     # Delta Electronics
+            '國泰金': '2882.TW',     # Cathay Financial
+            '玉山金': '2884.TW',     # E.SUN Financial
+            '兆豐金': '2886.TW',     # Mega Financial
+            '富邦金': '2881.TW',     # Fubon Financial
+            '元大台灣50': '0050.TW', # Yuanta Taiwan 50 ETF (alternative name)
+            '台泥': '1101.TW',       # Taiwan Cement
+            '遠傳': '4904.TW',       # Far EasTone
+            '中信金': '2891.TW',     # CTBC Financial
+            '永豐金': '2890.TW',     # SinoPac Financial
+            '南亞': '1303.TW',       # Nan Ya Plastics
+            '華碩': '2357.TW',       # ASUSTek
+            '廣達': '2382.TW',       # Quanta Computer
+            '仁寶': '2324.TW',       # Compal Electronics
+            '和碩': '4938.TW',       # Pegatron
+            '英業達': '2356.TW',     # Inventec
+            '宏碁': '2353.TW',       # Acer
+            '緯創': '3231.TW',       # Wistron
+            '光寶科': '2301.TW',     # Lite-On Technology
+            '統一': '1216.TW',       # Uni-President
+            '味全': '1201.TW',       # Wei Chuan Foods
+            '長榮': '2603.TW',       # Evergreen Marine
+            '陽明': '2609.TW',       # Yang Ming Marine
+            '萬海': '2615.TW'        # Wan Hai Lines
+        }
+        
+        # Check Taiwan name mapping first
+        if symbol in taiwan_name_mapping:
+            return taiwan_name_mapping[symbol]
+        
+        # US stocks - check broker context
+        if broker in ['TDA', 'SCHWAB']:
+            return symbol  # AAPL, MSFT, etc. (no suffix needed)
+        
+        # Hong Kong stocks - .HK suffix
+        if symbol.isdigit() and len(symbol) in [1, 2, 3, 4, 5]:
+            # Could be Hong Kong stock, but need more context
+            pass
+        
+        # Default: return as-is for US stocks or unknown symbols
         return symbol
 
     def calculate_unrealized_pnl(self, filters=None):
@@ -1073,6 +1316,94 @@ class PortfolioAPI:
             'total_shares': total_shares,
             'holdings_details': holdings_details,
             'price_fetch_errors': price_fetch_errors
+        }
+
+    def calculate_enhanced_unrealized_pnl(self, filters=None, base_currency='NTD'):
+        """Calculate unrealized P&L with enhanced forex conversion and comprehensive symbol mapping"""
+        holdings = self._get_current_holdings(filters)
+        
+        if not holdings:
+            return {
+                'unrealized_pnl': 0,
+                'total_market_value': 0,
+                'total_cost_basis': 0,
+                'holdings_count': 0,
+                'total_shares': 0,
+                'holdings_details': [],
+                'price_fetch_errors': [],
+                'forex_rates_used': {},
+                'base_currency': base_currency
+            }
+        
+        # Prepare symbols with broker information for enhanced price fetching
+        symbols_with_brokers = [(holding[0], holding[1]) for holding in holdings]  # symbol, broker
+        
+        # Get current prices using enhanced method
+        current_prices, price_errors = self._get_current_prices_enhanced(symbols_with_brokers)
+        
+        # Get current forex rates
+        forex_rates = {
+            'USDTWD': self.get_forex_rate('USD', 'TWD'),
+            'USDNTD': self.get_forex_rate('USD', 'NTD')  # Same as USDTWD but for clarity
+        }
+        
+        total_unrealized_pnl = 0
+        total_market_value = 0
+        total_cost_basis = 0
+        total_shares = 0
+        detailed_holdings = []
+        
+        for holding in holdings:
+            symbol, broker, bought_qty, sold_qty, current_holding, avg_cost, total_invested, currency = holding
+            
+            # Get current price
+            current_price = current_prices.get(symbol)
+            yahoo_symbol = self._get_yahoo_symbol(symbol, broker)
+            
+            if current_price is None:
+                # Fallback to average cost
+                current_price = avg_cost or 0
+            
+            # Calculate cost basis for remaining shares
+            cost_basis = (total_invested * (current_holding / bought_qty)) if bought_qty > 0 else 0
+            market_value = current_holding * current_price
+            
+            # Convert to base currency
+            market_value_base = self.convert_to_ntd(market_value, currency or 'NTD')
+            cost_basis_base = self.convert_to_ntd(cost_basis, currency or 'NTD')
+            unrealized_pnl_base = market_value_base - cost_basis_base
+            
+            total_unrealized_pnl += unrealized_pnl_base
+            total_market_value += market_value_base
+            total_cost_basis += cost_basis_base
+            total_shares += current_holding
+            
+            # Add detailed holding information
+            detailed_holdings.append({
+                'symbol': symbol,
+                'broker': broker,
+                'currency': currency,
+                'current_holding': current_holding,
+                'current_price': current_price,
+                'market_value': market_value,
+                'market_value_base': market_value_base,
+                'cost_basis': cost_basis,
+                'cost_basis_base': cost_basis_base,
+                'unrealized_pnl_base': unrealized_pnl_base,
+                'yahoo_symbol': yahoo_symbol,
+                'avg_cost': avg_cost
+            })
+        
+        return {
+            'unrealized_pnl': total_unrealized_pnl,
+            'total_market_value': total_market_value,
+            'total_cost_basis': total_cost_basis,
+            'holdings_count': len(holdings),
+            'total_shares': total_shares,
+            'holdings_details': detailed_holdings,
+            'price_fetch_errors': price_errors,
+            'forex_rates_used': forex_rates,
+            'base_currency': base_currency
         }
 
     def get_portfolio_performance_analysis(self, filters=None):
@@ -1848,6 +2179,92 @@ def api_unrealized_pnl():
             'total_cost_basis': 0,
             'holdings_count': 0,
             'price_fetch_errors': []
+        }), 500
+
+@app.route('/api/unrealized-pnl-enhanced')
+def api_unrealized_pnl_enhanced():
+    """Calculate enhanced unrealized P&L with comprehensive forex and symbol mapping"""
+    try:
+        # Get filters from request parameters
+        filters = {}
+        if request.args.get('broker'):
+            broker_list = request.args.getlist('broker')
+            filters['broker'] = broker_list if len(broker_list) > 1 else broker_list[0] if broker_list else None
+        
+        # Get base currency (default to NTD)
+        base_currency = request.args.get('base_currency', 'NTD')
+        
+        print(f"Debug - enhanced unrealized-pnl filters: {filters}, base_currency: {base_currency}")
+        result = portfolio_api.calculate_enhanced_unrealized_pnl(filters, base_currency)
+        print(f"Debug - enhanced unrealized-pnl result summary: unrealized_pnl={result.get('unrealized_pnl')}, errors={len(result.get('price_fetch_errors', []))}")
+        return jsonify(result)
+    except Exception as e:
+        print(f"Debug - enhanced unrealized-pnl error: {e}")
+        return jsonify({
+            'error': str(e),
+            'unrealized_pnl': 0,
+            'total_market_value': 0,
+            'total_cost_basis': 0,
+            'holdings_count': 0,
+            'price_fetch_errors': [],
+            'forex_rates_used': {},
+            'base_currency': 'NTD'
+        }), 500
+
+@app.route('/api/forex-rates')
+def api_forex_rates():
+    """Get current forex rates"""
+    try:
+        api = PortfolioAPI()
+        
+        # Get commonly used forex rates
+        rates = {
+            'USDTWD': api.get_forex_rate('USD', 'TWD'),
+            'USDNTD': api.get_forex_rate('USD', 'NTD'),
+            'TWDUSD': api.get_forex_rate('TWD', 'USD'),
+            'NTDUSD': api.get_forex_rate('NTD', 'USD')
+        }
+        
+        return jsonify({
+            'rates': rates,
+            'timestamp': datetime.now().isoformat(),
+            'base_currency': 'Multiple'
+        })
+    except Exception as e:
+        print(f"Debug - forex-rates error: {e}")
+        return jsonify({
+            'error': str(e),
+            'rates': {},
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/api/symbol-mapping')
+def api_symbol_mapping():
+    """Get symbol mapping information for debugging"""
+    try:
+        api = PortfolioAPI()
+        
+        # Get test symbol mappings
+        test_symbols = ['台積電', '2330', 'AAPL', '聯發科', '2454']
+        mappings = {}
+        
+        for symbol in test_symbols:
+            yahoo_symbol = api._get_yahoo_symbol(symbol, None)
+            yahoo_symbol_with_broker = api._get_yahoo_symbol(symbol, 'CATHAY')
+            mappings[symbol] = {
+                'yahoo_symbol': yahoo_symbol,
+                'yahoo_symbol_with_cathay': yahoo_symbol_with_broker
+            }
+        
+        return jsonify({
+            'mappings': mappings,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        print(f"Debug - symbol-mapping error: {e}")
+        return jsonify({
+            'error': str(e),
+            'mappings': {}
         }), 500
 
 @app.route('/api/debug-summary-detailed')
