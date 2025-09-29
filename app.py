@@ -1189,8 +1189,8 @@ class PortfolioAPI:
     
     def _get_yahoo_symbol(self, symbol, broker=None):
         """Enhanced symbol mapping for all exchanges with comprehensive Taiwan stock support"""
-        # Taiwan stocks - numeric codes (4 digits)
-        if symbol.isdigit() and len(symbol) == 4:
+        # Taiwan stocks - numeric codes (4 or 6 digits)
+        if symbol.isdigit() and len(symbol) in [4, 6]:
             return f"{symbol}.TW"
         
         # Taiwan stocks - Chinese names (comprehensive mapping)
@@ -1199,7 +1199,7 @@ class PortfolioAPI:
             '聯發科': '2454.TW',     # MediaTek
             '鴻海': '2317.TW',       # Foxconn/Hon Hai
             '中鋼': '2002.TW',       # China Steel
-            '富邦台50': '0050.TW',   # Fubon Taiwan 50 ETF
+            '富邦台50': '006208.TW',   # Fubon Taiwan 50 ETF
             '台塑': '1301.TW',       # Formosa Plastics
             '台化': '1326.TW',       # Formosa Chemicals
             '中華電': '2412.TW',     # Chunghwa Telecom
