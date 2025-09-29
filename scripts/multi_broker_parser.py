@@ -563,10 +563,20 @@ class MultiBrokerPortfolioParser:
                 # This might be a continuation line without a date - use the current date
                 # Skip lines that are just industry fees or other non-transaction info
                 if not any(skip_word in line for skip_word in ['Industry Fee', 'NAME_PART', 'Page', 'Total']):
-                    # Check if this looks like a transaction line (has category/action or stock symbols)
-                    if (any(indicator in line.lower() for indicator in ['sale', 'purchase', 'buy', 'sold', 'bought', 'withdrawal', 'deposit', 'interest', 'dividend']) or
+                    # For new Schwab format, check if this looks like a transaction line
+                    # Look for Category indicators (Sale, Purchase, Interest, Withdrawal, etc.)
+                    # Even if Action column is empty
+                    line_has_transaction = (
+                        any(indicator in line.lower() for indicator in [
+                            'sale', 'purchase', 'buy', 'sold', 'bought', 'withdrawal', 'deposit', 
+                            'interest', 'dividend', 'nra tax', 'credit'
+                        ]) or
                         re.search(r'\b[A-Z]{3,5}\b', line) or  # Stock symbol pattern
-                        re.search(r'\(\d+', line)):  # Quantity in parentheses pattern
+                        re.search(r'\(\d+', line) or  # Quantity in parentheses pattern (legacy)
+                        re.search(r'\d+\.\d{4}', line)  # Price pattern like 179.7500
+                    )
+                    
+                    if line_has_transaction:
                         transaction = self.parse_detailed_transaction_line(line.strip(), current_date)
                         if transaction:
                             transactions.append(transaction)
@@ -591,8 +601,13 @@ class MultiBrokerPortfolioParser:
             'realized_gain_loss': 0
         }
         
-        # Identify transaction type - expand pattern matching
+        # Identify transaction type - expand pattern matching for the new Schwab format
         line_lower = line.lower()
+        
+        # For new Schwab format, Category and Action are in separate columns
+        # Category: Sale, Purchase, Interest, Withdrawal, etc.
+        # Action: empty for stock transactions, "Buy", "NRA Tax", "Credit", etc. for others
+        
         if ('sale' in line_lower or 'sold' in line_lower or 
             'sell' in line_lower or 'redemption' in line_lower):
             transaction['transaction_type'] = 'SELL'
@@ -603,22 +618,47 @@ class MultiBrokerPortfolioParser:
             transaction['transaction_type'] = 'WITHDRAWAL'
         elif 'deposit' in line_lower:
             transaction['transaction_type'] = 'DEPOSIT'
-        elif 'interest' in line_lower and 'credit' in line_lower:
-            transaction['transaction_type'] = 'INTEREST'
-        elif ('interest' in line_lower and 'tax' in line_lower) or 'nra tax' in line_lower:
-            transaction['transaction_type'] = 'TAX'
+        elif 'interest' in line_lower:
+            # For interest transactions, check for NRA Tax or Credit
+            if 'nra tax' in line_lower or ('tax' in line_lower and 'interest' in line_lower):
+                transaction['transaction_type'] = 'TAX'
+            elif 'credit' in line_lower:
+                transaction['transaction_type'] = 'INTEREST'
+            else:
+                # Default to interest for other interest-related transactions
+                transaction['transaction_type'] = 'INTEREST'
         elif 'dividend' in line_lower:
-            transaction['transaction_type'] = 'DIVIDEND'
+            # Similar handling for dividend transactions
+            if 'nra tax' in line_lower or ('tax' in line_lower and 'dividend' in line_lower):
+                transaction['transaction_type'] = 'TAX'
+            else:
+                transaction['transaction_type'] = 'DIVIDEND'
         
         # For stock transactions, parse the structured format
         if transaction['transaction_type'] in ['SELL', 'BUY']:
-            # Extract symbol (3-5 uppercase letters)
+            # Extract symbol (3-5 uppercase letters) - handle new Schwab format
+            # In new format, symbol appears after Category and Action columns
             symbol_match = re.search(r'\b([A-Z]{3,5})\b', line)
             if symbol_match:
                 potential_symbol = symbol_match.group(1)
                 # Filter out common non-symbol words
                 if potential_symbol not in ['CORP', 'INC', 'LLC', 'CLASS', 'FUND', 'SCHWAB', 'BANK', 'TFRD', 'NAME_PART', 'AMEX']:
                     transaction['symbol'] = potential_symbol
+                    
+            # If no symbol found using standard method, try parsing the new Schwab table format
+            # Format: "Date | Category | Action | Symbol/CUSIP | Description | Quantity | Price/Rate | Charges/Int. | Amount"
+            if not transaction['symbol']:
+                # Split by multiple spaces or tabs to identify columns
+                parts = re.split(r'\s{2,}|\t+', line.strip())
+                if len(parts) >= 4:
+                    # In new format, symbol is typically in the 3rd or 4th column (0-indexed)
+                    for part in parts[2:5]:  # Check columns that might contain symbol
+                        symbol_in_part = re.search(r'\b([A-Z]{3,5})\b', part)
+                        if symbol_in_part:
+                            potential_symbol = symbol_in_part.group(1)
+                            if potential_symbol not in ['CORP', 'INC', 'LLC', 'CLASS', 'FUND', 'SCHWAB', 'BANK']:
+                                transaction['symbol'] = potential_symbol
+                                break
             
             # Extract company name (between symbol and quantity)
             if transaction['symbol']:
@@ -632,40 +672,24 @@ class MultiBrokerPortfolioParser:
                     if company_match:
                         transaction['description'] = f"{transaction['symbol']} {company_match.group(1).strip()}"
             
-            # Parse numeric values with multiple pattern attempts
-            # Pattern 1: Standard format: (quantity) price fee amount gain/loss
-            numeric_match = re.search(r'\((\d+(?:\.\d+)?)\)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*([\d,]+\.?\d*)?', line)
+            # Parse numeric values using the new Schwab format understanding
+            # Example line: "06/12 Purchase    GOOGL    ALPHABET INC CLASS A    360.0000    179.7500    (64,710.00)"
             
-            if not numeric_match:
-                # Pattern 2: Alternative format with different spacing
-                numeric_match = re.search(r'\((\d+(?:\.\d+)?)\)[^0-9]*([\d,]+\.?\d*)[^0-9]+([\d,]+\.?\d*)[^0-9]+([\d,]+\.?\d*)', line)
+            # Try the new Schwab format first (most common now)
+            parsed_values = self._parse_new_schwab_format(line)
             
-            if not numeric_match:
-                # Pattern 3: Look for quantity in parentheses and any numbers after
-                quantity_match = re.search(r'\((\d+(?:\.\d+)?)\)', line)
-                if quantity_match:
-                    # Find all numbers after the quantity
-                    after_quantity = line[quantity_match.end():]
-                    numbers = re.findall(r'[\d,]+\.?\d*', after_quantity)
-                    if len(numbers) >= 3:  # At least price, fee, amount
-                        numeric_match = type('Match', (), {
-                            'group': lambda i: quantity_match.group(1) if i == 1 else 
-                                    (numbers[i-2] if i <= len(numbers)+1 else '0')
-                        })()
+            if not parsed_values:
+                # Try legacy format with quantity in parentheses
+                parsed_values = self._parse_legacy_schwab_format(line)
             
-            if numeric_match:
+            # If we successfully parsed values, use them
+            if parsed_values:
                 try:
-                    transaction['quantity'] = float(numeric_match.group(1).replace(',', ''))
-                    transaction['price'] = float(numeric_match.group(2).replace(',', ''))
-                    transaction['fee'] = float(numeric_match.group(3).replace(',', '')) if numeric_match.group(3) else 0
-                    transaction['amount'] = float(numeric_match.group(4).replace(',', '')) if numeric_match.group(4) else 0
-                    
-                    # Extract realized gain/loss if available
-                    if hasattr(numeric_match, 'group') and numeric_match.group(5):
-                        gain_loss_str = numeric_match.group(5).replace(',', '')
-                        gain_loss_match = re.search(r'(\d+\.?\d*)', gain_loss_str)
-                        if gain_loss_match:
-                            transaction['realized_gain_loss'] = float(gain_loss_match.group(1))
+                    transaction['quantity'] = parsed_values['quantity']
+                    transaction['price'] = parsed_values['price']
+                    transaction['fee'] = parsed_values['fee']
+                    transaction['amount'] = parsed_values['amount']
+                    transaction['realized_gain_loss'] = parsed_values.get('realized_gain_loss', 0)
                     
                     # Set quantity sign based on transaction type
                     if transaction['transaction_type'] == 'SELL':
@@ -679,7 +703,7 @@ class MultiBrokerPortfolioParser:
                     # Add debug logging for successful stock transaction parsing
                     self.logger.debug(f"Parsed stock transaction: {transaction['transaction_type']} {transaction['symbol']} {transaction['quantity']} @ {transaction['price']} = {transaction['amount']}")
                     
-                except (ValueError, IndexError, AttributeError) as e:
+                except (ValueError, KeyError) as e:
                     # If parsing fails, try to extract just the amount for a basic transaction
                     self.logger.warning(f"Failed to parse stock transaction numbers: {e}")
                     amount_match = re.search(r'([\d,]+\.?\d*)', line)
@@ -691,7 +715,16 @@ class MultiBrokerPortfolioParser:
                             transaction['amount'] = abs(transaction['amount'])
         
         else:
-            # For non-stock transactions, look for simple amounts
+            # For non-stock transactions (Interest, Tax, Withdrawal, etc.), symbol should be empty
+            # But we might find description patterns for interest/tax transactions
+            if transaction['transaction_type'] in ['INTEREST', 'TAX']:
+                # Look for interest account description like "SCHWAB1 INT"
+                schwab_int_match = re.search(r'(SCHWAB\d+\s+INT)', line, re.IGNORECASE)
+                if schwab_int_match:
+                    transaction['description'] = schwab_int_match.group(1)
+                # For these transactions, symbol remains empty as expected
+                transaction['symbol'] = ''
+            
             # Look for amounts in parentheses (negative) first
             amount_match = re.search(r'\(([\d,]+\.?\d*)\)', line)
             if amount_match:
@@ -1360,6 +1393,171 @@ class MultiBrokerPortfolioParser:
                 print(f"\\n{broker}:")
                 for status, stats in counts.items():
                     print(f"  {status}: {stats['files']} files, {stats['records']} records")
+    
+    def _parse_new_schwab_format(self, line: str) -> Dict:
+        """Parse the new Schwab transaction format where quantity is not in parentheses
+        
+        Example line format (new tabular structure):
+        "Sale    GOOGL    ALPHABET INC CLASS A    (350.0000)    188.9350    0.06    66,127.19    4,665.30 (ST)"
+        OR
+        "Purchase    Buy    GOOGL    ALPHABET INC CLASS A    360.0000    179.7500        (64,710.00)"
+        OR 
+        "Sale    VOO    VANGUARD S&P 500 ETF    (18.0000)    541.9272         9,754.69    3,337.38,(LT)"
+        """
+        # First check: if this is clearly legacy format with quantity in parentheses, reject
+        legacy_pattern = re.search(r'\([0-9,]+\.?\d*\)\s+[0-9,]+\.?\d*\s+[0-9,]+\.?\d*\s+[0-9,]+\.?\d*', line)
+        if legacy_pattern:
+            return None
+        
+        # Remove extra spaces and normalize the line
+        normalized_line = ' '.join(line.split())
+        
+        # Extract symbol to better position the parsing
+        symbol_match = re.search(r'\b([A-Z]{3,5})\b', line)
+        if not symbol_match:
+            return None
+        
+        symbol = symbol_match.group(1)
+        if symbol in ['CORP', 'INC', 'LLC', 'CLASS', 'FUND', 'SCHWAB', 'BANK']:
+            return None
+        
+        # Find symbol position and extract the part after company description
+        symbol_pos = line.find(symbol)
+        after_symbol = line[symbol_pos + len(symbol):]
+        
+        # Look for company name and then numeric values
+        # Skip company description and find the numeric part
+        company_end = re.search(r'([A-Z\s&,]+?)\s+([0-9,]+\.?\d*)', after_symbol)
+        if not company_end:
+            return None
+            
+        # Extract all numbers after the company description
+        numeric_part = after_symbol[company_end.start(2):]
+        numbers = re.findall(r'[0-9,]+\.?\d*', numeric_part)
+        
+        if len(numbers) < 2:  # Need at least quantity and price
+            return None
+        
+        try:
+            # For new format: quantity, price, [fee], amount, [realized_gain_loss]
+            quantity = float(numbers[0].replace(',', ''))
+            price = float(numbers[1].replace(',', ''))
+            
+            # Initialize defaults
+            amount = 0
+            fee = 0
+            realized_gain_loss = 0
+            
+            # Check for amount in parentheses (indicates outgoing cash flow)
+            amount_in_parens = re.search(r'\(([\d,]+\.?\d*)\)', numeric_part)
+            if amount_in_parens:
+                amount = float(amount_in_parens.group(1).replace(',', ''))
+            
+            # Parse based on number of numeric values found
+            if len(numbers) == 2:
+                # Only quantity and price - no amount or fees (e.g., reinvestment)
+                amount = 0
+                fee = 0
+            elif len(numbers) == 3:
+                # quantity, price, amount (no fees - regular buy/sell)
+                if not amount_in_parens:  # If amount not already found in parentheses
+                    amount = float(numbers[2].replace(',', ''))
+                fee = 0  # Regular buy/sell transactions have no fees
+            elif len(numbers) == 4:
+                # quantity, price, amount, realized_gain_loss (no fees - regular sale)
+                if not amount_in_parens:
+                    amount = float(numbers[2].replace(',', ''))
+                realized_gain_loss = float(numbers[3].replace(',', ''))
+                fee = 0  # Regular buy/sell transactions have no fees
+            elif len(numbers) >= 5:
+                # quantity, price, fee, amount, realized_gain_loss (with fees)
+                if not amount_in_parens:
+                    fee = float(numbers[2].replace(',', ''))
+                    amount = float(numbers[3].replace(',', ''))
+                    if len(numbers) > 4:
+                        realized_gain_loss = float(numbers[4].replace(',', ''))
+                else:
+                    # If amount was in parentheses, adjust parsing
+                    fee = float(numbers[2].replace(',', ''))
+                    if len(numbers) > 3:
+                        realized_gain_loss = float(numbers[3].replace(',', ''))
+            
+            return {
+                'quantity': quantity,
+                'price': price,
+                'fee': fee,
+                'amount': amount,
+                'realized_gain_loss': realized_gain_loss
+            }
+            
+        except (ValueError, IndexError) as e:
+            self.logger.debug(f"Failed to parse new Schwab format numbers: {e}")
+            return None
+    
+    def _parse_legacy_schwab_format(self, line: str) -> Dict:
+        """Parse the legacy Schwab transaction format with quantity in parentheses
+        
+        Example line formats:
+        With fee: "08/04 Sale    GOOGL    ALPHABET INC CLASS A    (350.0000)    188.9350    0.06    66,127.19    4,665.30,(ST)"
+        No fee: "Sale    VOO    VANGUARD S&P 500 ETF    (18.0000)    541.9272         9,754.69    3,337.38,(LT)"
+        """
+        
+        # First try: Standard format with fee: (quantity) price fee amount [gain/loss]
+        numeric_match = re.search(r'\((\d+(?:,\d+)*(?:\.\d+)?)\)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*([\d,]+\.?\d*)?', line)
+        
+        if numeric_match:
+            try:
+                quantity = float(numeric_match.group(1).replace(',', ''))
+                price = float(numeric_match.group(2).replace(',', ''))
+                third_num = float(numeric_match.group(3).replace(',', ''))
+                fourth_num = float(numeric_match.group(4).replace(',', ''))
+                fifth_num = float(numeric_match.group(5).replace(',', '')) if numeric_match.group(5) else 0
+                
+                # Determine if third number is fee or amount based on magnitude
+                # Fees are typically small (< $100), amounts are typically larger
+                # Also, check if we have a fifth number (gain/loss)
+                if third_num < 100 and fourth_num > third_num and fifth_num > 0:
+                    # Format: (quantity) price fee amount gain/loss
+                    return {
+                        'quantity': quantity,
+                        'price': price,
+                        'fee': third_num,
+                        'amount': fourth_num,
+                        'realized_gain_loss': fifth_num
+                    }
+                else:
+                    # Format: (quantity) price amount gain/loss (no fee)
+                    return {
+                        'quantity': quantity,
+                        'price': price,
+                        'fee': 0,  # No fee for regular stock transactions
+                        'amount': third_num,
+                        'realized_gain_loss': fourth_num
+                    }
+            except (ValueError, IndexError):
+                pass
+        
+        # Alternative format with different spacing - more flexible
+        numeric_match = re.search(r'\((\d+(?:,\d+)*(?:\.\d+)?)\)[^0-9]*([\d,]+\.?\d*)[^0-9]+([\d,]+\.?\d*)[^0-9]+([\d,]+\.?\d*)', line)
+        if numeric_match:
+            try:
+                quantity = float(numeric_match.group(1).replace(',', ''))
+                price = float(numeric_match.group(2).replace(',', ''))
+                third_num = float(numeric_match.group(3).replace(',', ''))
+                fourth_num = float(numeric_match.group(4).replace(',', ''))
+                
+                # For this pattern, assume no fee (regular stock transaction)
+                return {
+                    'quantity': quantity,
+                    'price': price,
+                    'fee': 0,  # Regular stock transactions have no fees
+                    'amount': third_num,
+                    'realized_gain_loss': fourth_num
+                }
+            except (ValueError, IndexError):
+                pass
+        
+        return None
 
 
 if __name__ == "__main__":
