@@ -492,11 +492,16 @@ class PortfolioDashboard {
             const typeClass = transaction.transaction_type === '買進' ? 'transaction-type-buy' : 'transaction-type-sell';
             row.className = typeClass;
 
+            // Format quantity to show it's being used effectively
+            const quantityDisplay = transaction.quantity ? 
+                `${this.formatNumber(transaction.quantity)} ${transaction.symbol ? '股' : ''}` : 
+                '-';
+
             row.innerHTML = `
                 <td>${this.formatDate(transaction.transaction_date)}</td>
                 <td><strong>${transaction.symbol || '-'}</strong></td>
                 <td><span class="badge ${transaction.transaction_type === '買進' ? 'bg-success' : 'bg-success'}">${transaction.transaction_type}</span></td>
-                <td>${this.formatNumber(transaction.quantity)}</td>
+                <td><strong>${quantityDisplay}</strong></td>
                 <td>$${this.formatNumber(transaction.price)}</td>
                 <td>$${this.formatNumber(Math.abs(transaction.amount))}</td>
                 <td><span class="text-warning">$${this.formatNumber(transaction.fee)}</span></td>
@@ -575,13 +580,25 @@ class PortfolioDashboard {
         // Update cost basis
         document.getElementById('costBasis').textContent = `NT$${this.formatNumber(data.total_cost_basis || 0)}`;
         
-        // Update holdings count
-        document.getElementById('holdingsCount').textContent = data.holdings_count || 0;
+        // Update holdings count with both total shares and symbol count
+        const totalShares = data.total_shares || 0;
+        const symbolCount = data.holdings_count || 0;
+        document.getElementById('holdingsCount').innerHTML = `${this.formatNumber(totalShares)} 股<br><small>${symbolCount} 標的</small>`;
         
         // Show warning for price fetch errors if any
         if (data.price_fetch_errors && data.price_fetch_errors.length > 0) {
             console.warn('Failed to fetch prices for symbols:', data.price_fetch_errors);
-            // You could add a visual indicator here for price fetch failures
+            // Add a small visual indicator for price fetch failures
+            const holdingsCountElement = document.getElementById('holdingsCount');
+            if (holdingsCountElement) {
+                const warningIcon = '<small class="text-warning"><i class="fas fa-exclamation-triangle" title="部分股票價格獲取失敗"></i></small>';
+                holdingsCountElement.innerHTML += '<br>' + warningIcon;
+            }
+        }
+        
+        // Log detailed holdings information for debugging
+        if (data.holdings_details && data.holdings_details.length > 0) {
+            console.log('Current Holdings Details:', data.holdings_details);
         }
     }
 

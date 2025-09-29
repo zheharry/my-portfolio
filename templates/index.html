@@ -155,6 +155,25 @@
         .multi-select-list::-webkit-scrollbar-thumb:hover {
             background: #a8a8a8;
         }
+        
+        /* Filtered metrics section styling */
+        #filteredMetrics .card {
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+        }
+        
+        #filteredMetrics .card-body {
+            position: relative;
+        }
+        
+        #filteredMetrics .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent 0%, rgba(0,123,255,0.3) 50%, transparent 100%);
+        }
     </style>
 </head>
 <body>
@@ -293,60 +312,13 @@
             </div>
         </div>
 
-        <!-- Summary Cards -->
+        <!-- Main Summary Cards Row -->
         <div class="row mb-4" id="summaryCards">
             <div class="col-md-3">
                 <div class="card summary-card">
                     <div class="card-body text-center">
-                        <h5 class="card-title">總投資額 (Total Investment)</h5>
-                        <h3 class="text-primary" id="totalInvestment">$0</h3>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card summary-card">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">已實現損益 (Realized P&L)</h5>
-                        <h6 class="text-muted">僅已賣出部位 (Sold positions only)</h6>
-                        <h3 id="realizedPL">$0</h3>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card summary-card">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">未實現損益 (Unrealized P&L)</h5>
-                        <h6 class="text-muted">目前持股 (Current holdings)</h6>
-                        <h3 id="unrealizedPL">$0</h3>
-                        <small class="text-muted">基於最新收盤價 (Based on latest closing prices)</small>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card summary-card">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">總手續費 (Total Fees)</h5>
-                        <h3 class="text-warning" id="totalFees">$0</h3>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Second Row of Summary Cards -->
-        <div class="row mb-4">
-            <div class="col-md-3">
-                <div class="card summary-card">
-                    <div class="card-body text-center">
-                        <h5 class="card-title">淨收益 (Net Profit)</h5>
-                        <h3 id="netProfit">$0</h3>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card summary-card">
-                    <div class="card-body text-center">
                         <h5 class="card-title">持股市值 (Market Value)</h5>
-                        <h6 class="text-muted">目前持股總值 (Current holdings value)</h6>
+                        <h6 class="text-muted">持股數量 × 最新價格 (Shares × Current Price)</h6>
                         <h3 class="text-info" id="marketValue">$0</h3>
                     </div>
                 </div>
@@ -355,7 +327,7 @@
                 <div class="card summary-card">
                     <div class="card-body text-center">
                         <h5 class="card-title">持股成本 (Cost Basis)</h5>
-                        <h6 class="text-muted">目前持股成本 (Current holdings cost)</h6>
+                        <h6 class="text-muted">持股數量 × 平均買入價 (Shares × Avg Buy Price)</h6>
                         <h3 class="text-secondary" id="costBasis">$0</h3>
                     </div>
                 </div>
@@ -363,9 +335,71 @@
             <div class="col-md-3">
                 <div class="card summary-card">
                     <div class="card-body text-center">
-                        <h5 class="card-title">持股數量 (Holdings Count)</h5>
-                        <h6 class="text-muted">不同標的數量 (Number of symbols)</h6>
-                        <h3 class="text-dark" id="holdingsCount">0</h3>
+                        <h5 class="card-title">未實現損益 (Unrealized P&L)</h5>
+                        <h6 class="text-muted">市值 - 成本基礎 (Market Value - Cost Basis)</h6>
+                        <h3 id="unrealizedPL">$0</h3>
+                        <small class="text-muted">僅目前持股 (Current holdings only)</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">目前持股 (Current Holdings)</h5>
+                        <h6 class="text-muted">持有股數/標的數 (Shares/Symbols)</h6>
+                        <h3 class="text-dark" id="holdingsCount">0 股 / 0 標的</h3>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Separator Bar -->
+        <div class="row mb-3">
+            <div class="col-12">
+                <hr class="my-4" style="border-top: 3px solid #6c757d; border-radius: 2px;">
+                <div class="text-center mb-3">
+                    <h5 class="text-muted mb-0">
+                        <i class="fas fa-filter"></i> 篩選數據總覽 (Filtered Data Overview)
+                    </h5>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtered Metrics Row -->
+        <div class="row mb-4" id="filteredMetrics">
+            <div class="col-md-3">
+                <div class="card summary-card" style="border-left: 4px solid #007bff;">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">總投資額 (Total Investment)</h5>
+                        <h6 class="text-muted">基於篩選條件 (Based on filters)</h6>
+                        <h3 class="text-primary" id="totalInvestment">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card" style="border-left: 4px solid #28a745;">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">已實現損益 (Realized P&L)</h5>
+                        <h6 class="text-muted">僅已賣出部位 (Sold positions only)</h6>
+                        <h3 id="realizedPL">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card" style="border-left: 4px solid #ffc107;">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">總手續費 (Total Fees)</h5>
+                        <h6 class="text-muted">交易成本 (Transaction costs)</h6>
+                        <h3 class="text-warning" id="totalFees">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card summary-card" style="border-left: 4px solid #17a2b8;">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">淨收益 (Net Profit)</h5>
+                        <h6 class="text-muted">損益 - 手續費 (P&L - Fees)</h6>
+                        <h3 id="netProfit">$0</h3>
                     </div>
                 </div>
             </div>
