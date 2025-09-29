@@ -192,7 +192,16 @@
                     <input type="date" id="endDateFilter" class="form-control">
                 </div>
                 <div class="col-md-3">
-                    <!-- Empty space to maintain alignment -->
+                    <!-- Currency Display Toggle -->
+                    <label class="form-label">顯示幣別 (Display Currency)</label>
+                    <div class="d-flex gap-2">
+                        <button id="currencyToggle" class="btn btn-outline-primary" data-currency="NTD">
+                            <i class="fas fa-exchange-alt"></i> <span id="currencyLabel">NT$ (NTD)</span>
+                        </button>
+                        <small class="text-muted align-self-center" id="exchangeRateInfo" style="display: none;">
+                            1 USD = <span id="currentRate">32.0</span> NTD
+                        </small>
+                    </div>
                 </div>
             </div>
             

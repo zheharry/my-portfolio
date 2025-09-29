@@ -3,6 +3,7 @@ import sqlite3
 import json
 import pandas as pd
 import os
+import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 from scripts.multi_broker_parser import MultiBrokerPortfolioParser
@@ -291,15 +292,63 @@ class PortfolioAPI:
             cursor.execute("SELECT DISTINCT currency FROM transactions WHERE currency IS NOT NULL ORDER BY currency")
             return [row[0] for row in cursor.fetchall()]
     
+    def get_usd_to_ntd_rate(self):
+        """Get current USD to NTD exchange rate from external API with caching"""
+        try:
+            # Check for cached rate (1 hour expiry)
+            cache_file = "data/exchange_rate_cache.json"
+            fallback_rate = 32.0
+            
+            if os.path.exists(cache_file):
+                with open(cache_file, 'r') as f:
+                    cache_data = json.load(f)
+                    cache_time = datetime.fromisoformat(cache_data['timestamp'])
+                    if datetime.now() - cache_time < timedelta(hours=1):
+                        return cache_data['rate']
+            
+            # Fetch new rate from ExchangeRate-API (free tier)
+            response = requests.get(
+                "https://api.exchangerate-api.com/v4/latest/USD",
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            # Get TWD (Taiwan Dollar) rate
+            rate = data['rates'].get('TWD', fallback_rate)
+            
+            # Cache the result
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            cache_data = {
+                'rate': rate,
+                'timestamp': datetime.now().isoformat(),
+                'source': 'exchangerate-api.com'
+            }
+            with open(cache_file, 'w') as f:
+                json.dump(cache_data, f)
+            
+            return rate
+            
+        except Exception as e:
+            print(f"Error fetching exchange rate: {e}")
+            # Return cached rate if available, otherwise fallback
+            if os.path.exists(cache_file):
+                try:
+                    with open(cache_file, 'r') as f:
+                        cache_data = json.load(f)
+                        return cache_data['rate']
+                except:
+                    pass
+            return fallback_rate
+    
     def convert_to_ntd(self, amount, from_currency):
-        """Convert amount to NTD using fixed exchange rate"""
+        """Convert amount to NTD using dynamic exchange rate"""
         if amount is None:
             return 0
         
-        # Fixed exchange rate USD to NTD (you can make this configurable later)
-        usd_to_ntd_rate = 32.0  # Approximate rate
-        
         if from_currency == 'USD':
+            # Get dynamic exchange rate
+            usd_to_ntd_rate = self.get_usd_to_ntd_rate()
             return amount * usd_to_ntd_rate
         elif from_currency == 'NTD':
             return amount
@@ -1359,6 +1408,38 @@ def api_realized_pnl_breakdown():
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+@app.route('/api/exchange-rate')
+def api_exchange_rate():
+    """Get current USD to NTD exchange rate"""
+    try:
+        rate = portfolio_api.get_usd_to_ntd_rate()
+        
+        # Get cache info if available
+        cache_info = {}
+        cache_file = "data/exchange_rate_cache.json"
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r') as f:
+                    cache_data = json.load(f)
+                    cache_info = {
+                        'last_updated': cache_data.get('timestamp'),
+                        'source': cache_data.get('source', 'unknown')
+                    }
+            except:
+                pass
+        
+        return jsonify({
+            'success': True,
+            'rate': rate,
+            'cache_info': cache_info
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'rate': 32.0  # Fallback rate
         }), 500
 
 if __name__ == '__main__':

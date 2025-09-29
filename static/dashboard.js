@@ -6,6 +6,8 @@ class PortfolioDashboard {
         this.performanceChart = null;
         this.distributionChart = null;
         this.currentFilters = {};
+        this.displayCurrency = localStorage.getItem('displayCurrency') || 'NTD';
+        this.exchangeRate = 32.0; // Default fallback rate
         
         try {
             this.initializeEventListeners();
@@ -21,6 +23,9 @@ class PortfolioDashboard {
         document.getElementById('applyFilters').addEventListener('click', () => this.applyFilters());
         document.getElementById('clearFilters').addEventListener('click', () => this.clearFilters());
         document.getElementById('exportData').addEventListener('click', () => this.exportData());
+        
+        // Currency toggle event listener
+        document.getElementById('currencyToggle').addEventListener('click', () => this.toggleCurrency());
         
         // Auto-apply filters on change for better UX
         const filterElements = [
@@ -40,6 +45,14 @@ class PortfolioDashboard {
         console.log('Starting to load initial data...');
         this.showLoading(true);
         try {
+            console.log('Loading exchange rate...');
+            await this.loadExchangeRate();
+            console.log('Exchange rate loaded');
+            
+            console.log('Initializing currency display...');
+            this.initializeCurrencyDisplay();
+            console.log('Currency display initialized');
+            
             console.log('Checking data freshness...');
             await this.checkDataFreshness();
             console.log('Data freshness checked');
@@ -95,6 +108,60 @@ class PortfolioDashboard {
 
         } catch (error) {
             console.error('Error loading filter options:', error);
+        }
+    }
+
+    // Load exchange rate
+    async loadExchangeRate() {
+        try {
+            const response = await this.fetchAPI('/api/exchange-rate');
+            if (response.success) {
+                this.exchangeRate = response.rate;
+                // Update the exchange rate display
+                document.getElementById('currentRate').textContent = response.rate.toFixed(2);
+                document.getElementById('exchangeRateInfo').style.display = 'block';
+            }
+        } catch (error) {
+            console.error('Error loading exchange rate:', error);
+            // Keep using fallback rate
+        }
+    }
+
+    // Initialize currency display
+    initializeCurrencyDisplay() {
+        const toggle = document.getElementById('currencyToggle');
+        const label = document.getElementById('currencyLabel');
+        
+        toggle.setAttribute('data-currency', this.displayCurrency);
+        
+        if (this.displayCurrency === 'USD') {
+            label.textContent = '$ (USD)';
+            toggle.className = 'btn btn-outline-success';
+        } else {
+            label.textContent = 'NT$ (NTD)';
+            toggle.className = 'btn btn-outline-primary';
+        }
+    }
+
+    // Toggle currency display
+    toggleCurrency() {
+        this.displayCurrency = this.displayCurrency === 'NTD' ? 'USD' : 'NTD';
+        localStorage.setItem('displayCurrency', this.displayCurrency);
+        
+        this.initializeCurrencyDisplay();
+        
+        // Refresh all displays that show currency amounts
+        this.refreshCurrencyDisplays();
+    }
+
+    // Refresh all currency displays
+    refreshCurrencyDisplays() {
+        // Reload summary to update currency display
+        this.loadSummary();
+        
+        // Update transaction table if loaded
+        if (this.transactions.length > 0) {
+            this.updateTransactionsTable();
         }
     }
 
@@ -471,11 +538,11 @@ class PortfolioDashboard {
                 <td><strong>${transaction.symbol || '-'}</strong></td>
                 <td><span class="badge ${transaction.transaction_type === '買進' ? 'bg-success' : 'bg-success'}">${transaction.transaction_type}</span></td>
                 <td>${this.formatNumber(transaction.quantity)}</td>
-                <td>$${this.formatNumber(transaction.price)}</td>
-                <td>$${this.formatNumber(Math.abs(transaction.amount))}</td>
-                <td><span class="text-warning">$${this.formatNumber(transaction.fee)}</span></td>
-                <td><span class="text-info">$${this.formatNumber(transaction.tax)}</span></td>
-                <td class="${transaction.net_amount >= 0 ? 'gain' : 'loss'}">${this.formatNetAmount(transaction.net_amount)}</td>
+                <td>${this.formatNetAmount(transaction.price, transaction.currency || 'USD')}</td>
+                <td>${this.formatNetAmount(Math.abs(transaction.amount), transaction.currency || 'USD')}</td>
+                <td><span class="text-warning">${this.formatNetAmount(transaction.fee, transaction.currency || 'USD')}</span></td>
+                <td><span class="text-info">${this.formatNetAmount(transaction.tax, transaction.currency || 'USD')}</span></td>
+                <td class="${transaction.net_amount >= 0 ? 'gain' : 'loss'}">${this.formatNetAmount(transaction.net_amount, transaction.currency || 'USD')}</td>
                 <td><span class="badge bg-secondary">${transaction.broker}</span></td>
                 <td><span class="badge bg-primary">${transaction.currency || 'USD'}</span></td>
                 <td><small>${transaction.order_id || ''}</small></td>
@@ -487,14 +554,18 @@ class PortfolioDashboard {
 
     // Update summary cards (all amounts converted to NTD)
     updateSummaryCards(summary) {
-        document.getElementById('totalInvestment').textContent = `NT$${this.formatNumber(summary.total_purchases || 0)}`;
+        // Format total investment based on display currency
+        const totalInvestmentFormatted = this.formatNetAmount(summary.total_purchases || 0, 'NTD');
+        document.getElementById('totalInvestment').innerHTML = totalInvestmentFormatted;
         
         const realizedPL = summary.realized_gain_loss || 0;
         const realizedPLElement = document.getElementById('realizedPL');
         realizedPLElement.innerHTML = this.formatNetAmount(realizedPL, 'NTD');
         realizedPLElement.className = realizedPL >= 0 ? 'gain' : 'loss';
         
-        document.getElementById('totalFees').textContent = `NT$${this.formatNumber(summary.total_fees || 0)}`;
+        // Format total fees based on display currency  
+        const totalFeesFormatted = this.formatNetAmount(summary.total_fees || 0, 'NTD');
+        document.getElementById('totalFees').innerHTML = totalFeesFormatted;
         
         const netProfit = summary.net_after_fees || 0;
         const netProfitElement = document.getElementById('netProfit');
@@ -543,11 +614,13 @@ class PortfolioDashboard {
         unrealizedPLElement.innerHTML = this.formatNetAmount(unrealizedPL, 'NTD');
         unrealizedPLElement.className = unrealizedPL >= 0 ? 'gain' : 'loss';
         
-        // Update market value
-        document.getElementById('marketValue').textContent = `NT$${this.formatNumber(data.total_market_value || 0)}`;
+        // Update market value with currency formatting
+        const marketValueFormatted = this.formatNetAmount(data.total_market_value || 0, 'NTD');
+        document.getElementById('marketValue').innerHTML = marketValueFormatted;
         
-        // Update cost basis
-        document.getElementById('costBasis').textContent = `NT$${this.formatNumber(data.total_cost_basis || 0)}`;
+        // Update cost basis with currency formatting
+        const costBasisFormatted = this.formatNetAmount(data.total_cost_basis || 0, 'NTD');
+        document.getElementById('costBasis').innerHTML = costBasisFormatted;
         
         // Update holdings count
         document.getElementById('holdingsCount').textContent = data.holdings_count || 0;
@@ -808,16 +881,28 @@ class PortfolioDashboard {
         });
     }
 
-    formatNetAmount(num, currency = 'USD') {
-        if (num === null || num === undefined) return currency === 'NTD' ? 'NT$0' : '$0';
-        const formatted = parseFloat(num).toLocaleString('en-US', { 
+    formatNetAmount(num, sourceCurrency = 'NTD') {
+        if (num === null || num === undefined) return this.displayCurrency === 'NTD' ? 'NT$0' : '$0';
+        
+        // Convert to display currency
+        let displayAmount = num;
+        let displayCurrency = this.displayCurrency;
+        
+        // Convert between currencies if needed
+        if (sourceCurrency === 'NTD' && this.displayCurrency === 'USD') {
+            displayAmount = num / this.exchangeRate;
+        } else if (sourceCurrency === 'USD' && this.displayCurrency === 'NTD') {
+            displayAmount = num * this.exchangeRate;
+        }
+        
+        const formatted = parseFloat(displayAmount).toLocaleString('en-US', { 
             minimumFractionDigits: 0, 
             maximumFractionDigits: 2 
         });
         
-        const currencySymbol = currency === 'NTD' ? 'NT$' : '$';
+        const currencySymbol = displayCurrency === 'NTD' ? 'NT$' : '$';
         
-        if (num < 0) {
+        if (displayAmount < 0) {
             return `<span class="net-loss">-${currencySymbol}${formatted.replace('-', '')}</span>`;
         }
         return `${currencySymbol}${formatted}`;
