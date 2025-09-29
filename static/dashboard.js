@@ -6,6 +6,7 @@ class PortfolioDashboard {
         this.performanceChart = null;
         this.distributionChart = null;
         this.currentFilters = {};
+        this.brokerKeys = {}; // Store mapping from display names to backend keys
         
         try {
             this.initializeEventListeners();
@@ -81,7 +82,7 @@ class PortfolioDashboard {
             const symbols = await this.fetchAPI('/api/symbols');
             this.populateSelect('symbolFilter', symbols);
 
-            // Load brokers (now returns normalized full names without duplicates)
+            // Load brokers - API returns array directly now
             const brokers = await this.fetchAPI('/api/brokers');
             this.populateSelect('brokerFilter', brokers);
 
@@ -322,7 +323,14 @@ class PortfolioDashboard {
             const container = document.getElementById(containerId);
             if (container) {
                 const checkedBoxes = container.querySelectorAll('input[type="checkbox"]:checked');
-                const selectedValues = Array.from(checkedBoxes).map(checkbox => checkbox.value);
+                let selectedValues = Array.from(checkedBoxes).map(checkbox => checkbox.value);
+                
+                // For broker filter, convert display names to backend keys
+                if (containerId === 'brokerFilter' && this.brokerKeys) {
+                    selectedValues = selectedValues.map(displayName => 
+                        this.brokerKeys[displayName] || displayName
+                    );
+                }
                 
                 if (selectedValues.length > 0) {
                     filters[filterKey] = selectedValues;
@@ -347,13 +355,18 @@ class PortfolioDashboard {
         }
     }
 
-    // Get currently selected brokers
+    // Get currently selected brokers (converted to backend keys)
     getSelectedBrokers() {
         const container = document.getElementById('brokerFilter');
         if (!container) return [];
         
         const checkedBoxes = container.querySelectorAll('input[type="checkbox"]:checked');
-        return Array.from(checkedBoxes).map(checkbox => checkbox.value);
+        const displayNames = Array.from(checkedBoxes).map(checkbox => checkbox.value);
+        
+        // Convert display names to backend keys
+        return displayNames.map(displayName => 
+            this.brokerKeys[displayName] || displayName
+        );
     }
 
     // Refresh symbols based on selected brokers
