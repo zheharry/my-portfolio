@@ -354,6 +354,42 @@ class PortfolioAPI:
             # Default to treating as NTD if currency is unknown
             return amount
     
+    def _apply_broker_filter(self, query, params, filters, use_account_join=False):
+        """Apply broker filter with proper handling of name mapping"""
+        if not filters or not filters.get('broker'):
+            return query, params
+            
+        broker_mapping = {
+            '國泰證券': 'CATHAY',
+            'Charles Schwab': 'SCHWAB', 
+            'TD Ameritrade': 'TDA'
+        }
+        
+        broker_filter = filters['broker']
+        if isinstance(broker_filter, list) and len(broker_filter) > 0:
+            broker_conditions, broker_params = self._parse_broker_filter(broker_filter, use_account_join=use_account_join)
+            if broker_conditions:
+                query += f" AND ({' OR '.join(broker_conditions)})"
+                params.extend(broker_params)
+        elif isinstance(broker_filter, str):
+            # Single broker (backward compatibility)
+            if '|' in broker_filter:
+                # Composite key: specific account
+                broker_short, account_id = broker_filter.split('|', 1)
+                query += " AND (t.broker = ? AND t.account_id = ?)"
+                params.extend([broker_short, account_id])
+            else:
+                # Regular broker - check both original name and mapped name
+                short_name = broker_mapping.get(broker_filter, broker_filter)
+                if use_account_join:
+                    query += " AND (t.broker = ? OR t.broker = ? OR a.broker = ? OR a.institution = ?)"
+                    params.extend([broker_filter, short_name, short_name, broker_filter])
+                else:
+                    query += " AND (t.broker = ? OR t.broker = ?)"
+                    params.extend([broker_filter, short_name])
+                    
+        return query, params
+
     def _parse_broker_filter(self, broker_filter_list, use_account_join=False):
         """Parse broker filter list that may contain composite keys (BROKER|ACCOUNT_ID)"""
         broker_conditions = []
@@ -376,13 +412,14 @@ class PortfolioAPI:
                 # Regular broker: either full name or short name
                 short_name = broker_mapping.get(broker_entry, broker_entry)
                 if use_account_join:
-                    # When joining with accounts table, use aliases
-                    broker_conditions.append("(t.broker = ? OR a.broker = ? OR a.institution = ?)")
-                    params.extend([short_name, short_name, broker_entry])
+                    # When joining with accounts table, check both original name and mapped name
+                    # This handles cases where transactions table has Chinese names but accounts table has short codes
+                    broker_conditions.append("(t.broker = ? OR t.broker = ? OR a.broker = ? OR a.institution = ?)")
+                    params.extend([broker_entry, short_name, short_name, broker_entry])
                 else:
-                    # When not joining, only use transaction table
-                    broker_conditions.append("t.broker = ?")
-                    params.append(short_name)
+                    # When not joining, check both original and mapped name in transaction table
+                    broker_conditions.append("(t.broker = ? OR t.broker = ?)")
+                    params.extend([broker_entry, short_name])
         
         return broker_conditions, params
 
@@ -424,10 +461,10 @@ class PortfolioAPI:
                         query += " AND (t.broker = ? AND t.account_id = ?)"
                         params.extend([broker_short, account_id])
                     else:
-                        # Regular broker
+                        # Regular broker - check both original name and mapped name
                         short_name = broker_mapping.get(broker_filter, broker_filter)
-                        query += " AND (t.broker = ? OR a.broker = ? OR a.institution = ?)"
-                        params.extend([short_name, short_name, broker_filter])
+                        query += " AND (t.broker = ? OR t.broker = ? OR a.broker = ? OR a.institution = ?)"
+                        params.extend([broker_filter, short_name, short_name, broker_filter])
             
             # Handle multi-select symbol filter
             if filters.get('symbol'):
@@ -529,10 +566,10 @@ class PortfolioAPI:
                         query += " AND (t.broker = ? AND t.account_id = ?)"
                         params.extend([broker_short, account_id])
                     else:
-                        # Regular broker
+                        # Regular broker - check both original name and mapped name
                         short_name = broker_mapping.get(broker_filter, broker_filter)
-                        query += " AND t.broker = ?"
-                        params.append(short_name)
+                        query += " AND (t.broker = ? OR t.broker = ?)"
+                        params.extend([broker_filter, short_name])
             
             # Handle multi-select symbol filter
             if filters.get('symbol'):
@@ -682,18 +719,35 @@ class PortfolioAPI:
         # Apply filters
         params = []
         if filters:
-            # Handle multi-select broker filter
+            # Apply broker filter using improved logic
             if filters.get('broker'):
                 broker_filter = filters['broker']
                 if isinstance(broker_filter, list) and len(broker_filter) > 0:
-                    short_names = [broker_mapping.get(broker, broker) for broker in broker_filter]
-                    placeholders = ','.join(['?' for _ in short_names])
-                    positions_query += f" AND t.broker IN ({placeholders})"
-                    params.extend(short_names)
+                    # For each broker, check both original name and mapped name
+                    broker_conditions = []
+                    for broker in broker_filter:
+                        short_name = broker_mapping.get(broker, broker)
+                        if broker != short_name:
+                            # If there's a mapping, check both names
+                            broker_conditions.append("(t.broker = ? OR t.broker = ?)")
+                            params.extend([broker, short_name])
+                        else:
+                            # If no mapping, just check the original name
+                            broker_conditions.append("t.broker = ?")
+                            params.append(broker)
+                    
+                    if broker_conditions:
+                        positions_query += f" AND ({' OR '.join(broker_conditions)})"
                 elif isinstance(broker_filter, str):
                     short_name = broker_mapping.get(broker_filter, broker_filter)
-                    positions_query += " AND t.broker = ?"
-                    params.append(short_name)
+                    if broker_filter != short_name:
+                        # If there's a mapping, check both names
+                        positions_query += " AND (t.broker = ? OR t.broker = ?)"
+                        params.extend([broker_filter, short_name])
+                    else:
+                        # If no mapping, just check the original name
+                        positions_query += " AND t.broker = ?"
+                        params.append(broker_filter)
             
             # Handle multi-select symbol filter - FIXED: This was missing!
             if filters.get('symbol'):
@@ -837,17 +891,50 @@ class PortfolioAPI:
         # Apply filters  
         params = []
         if filters:
+            # Handle multi-select broker filter
             if filters.get('broker'):
                 broker_filter = filters['broker']
                 if isinstance(broker_filter, list) and len(broker_filter) > 0:
-                    short_names = [broker_mapping.get(broker, broker) for broker in broker_filter]
-                    placeholders = ','.join(['?' for _ in short_names])
-                    holdings_query += f" AND t.broker IN ({placeholders})"
-                    params.extend(short_names)
+                    broker_conditions, broker_params = self._parse_broker_filter(broker_filter, use_account_join=False)
+                    if broker_conditions:
+                        holdings_query += f" AND ({' OR '.join(broker_conditions)})"
+                        params.extend(broker_params)
                 elif isinstance(broker_filter, str):
-                    short_name = broker_mapping.get(broker_filter, broker_filter)
-                    holdings_query += " AND t.broker = ?"
-                    params.append(short_name)
+                    # Single broker (backward compatibility)
+                    if '|' in broker_filter:
+                        # Composite key: specific account
+                        broker_short, account_id = broker_filter.split('|', 1)
+                        holdings_query += " AND (t.broker = ? AND t.account_id = ?)"
+                        params.extend([broker_short, account_id])
+                    else:
+                        # Regular broker - check both original name and mapped name
+                        short_name = broker_mapping.get(broker_filter, broker_filter)
+                        holdings_query += " AND (t.broker = ? OR t.broker = ?)"
+                        params.extend([broker_filter, short_name])
+            
+            # Handle multi-select symbol filter
+            if filters.get('symbol'):
+                symbol_filter = filters['symbol']
+                if isinstance(symbol_filter, list) and len(symbol_filter) > 0:
+                    placeholders = ','.join(['?' for _ in symbol_filter])
+                    holdings_query += f" AND t.symbol IN ({placeholders})"
+                    params.extend(symbol_filter)
+                elif isinstance(symbol_filter, str):
+                    holdings_query += " AND t.symbol = ?"
+                    params.append(symbol_filter)
+            
+            # Handle date filters
+            if filters.get('start_date'):
+                holdings_query += " AND t.transaction_date >= ?"
+                params.append(filters['start_date'])
+            
+            if filters.get('end_date'):
+                holdings_query += " AND t.transaction_date <= ?"
+                params.append(filters['end_date'])
+            
+            if filters.get('year'):
+                holdings_query += " AND strftime('%Y', t.transaction_date) = ?"
+                params.append(str(filters['year']))
         
         holdings_query += " GROUP BY t.symbol, t.broker, t.currency HAVING current_holding > 0"
         
@@ -857,7 +944,7 @@ class PortfolioAPI:
             return cursor.fetchall()
 
     def _get_current_prices(self, symbols):
-        """Fetch current prices for symbols from Yahoo Finance"""
+        """Fetch current prices for symbols from Yahoo Finance with improved Taiwan stock support"""
         import yfinance as yf
         
         prices = {}
@@ -866,25 +953,42 @@ class PortfolioAPI:
                 # Handle different stock markets
                 yahoo_symbol = self._get_yahoo_symbol(symbol)
                 ticker = yf.Ticker(yahoo_symbol)
-                hist = ticker.history(period="1d")
+                
+                # Use longer period for Taiwan stocks for better data availability
+                period = "5d" if ".TW" in yahoo_symbol else "1d"
+                hist = ticker.history(period=period)
+                
                 if not hist.empty:
-                    prices[symbol] = hist['Close'].iloc[-1]
+                    current_price = hist['Close'].iloc[-1]
+                    prices[symbol] = current_price
                 else:
-                    prices[symbol] = None
+                    # Try alternative method for Taiwan stocks
+                    if ".TW" in yahoo_symbol:
+                        try:
+                            info = ticker.info
+                            if info and 'regularMarketPrice' in info:
+                                prices[symbol] = info['regularMarketPrice']
+                            else:
+                                prices[symbol] = None
+                        except:
+                            prices[symbol] = None
+                    else:
+                        prices[symbol] = None
+                    
             except Exception as e:
                 print(f"Error fetching price for {symbol}: {e}")
                 prices[symbol] = None
         return prices
     
     def _get_yahoo_symbol(self, symbol):
-        """Convert local symbol to Yahoo Finance format"""
-        # Taiwan stock market symbols
+        """Convert local symbol to Yahoo Finance format - CORRECTED for Taiwan stocks"""
+        # Taiwan stock market symbols - USE TAIWAN EXCHANGE, NOT US ADRs
         taiwan_symbols = {
-            '台積電': '2330.TW',
-            '聯發科': '2454.TW', 
-            '中鋼': '2002.TW',
-            '富邦台50': '0050.TW',
-            '鴻海': '2317.TW'
+            '台積電': '2330.TW',     # TSMC on Taiwan Stock Exchange - NEVER use TSM ADR
+            '聯發科': '2454.TW',     # MediaTek on Taiwan Stock Exchange  
+            '中鋼': '2002.TW',       # China Steel
+            '富邦台50': '0050.TW',   # Fubon Taiwan 50 ETF
+            '鴻海': '2317.TW'        # Foxconn
         }
         
         # Check if it's a Taiwan stock
@@ -908,6 +1012,8 @@ class PortfolioAPI:
                 'total_market_value': 0,
                 'total_cost_basis': 0,
                 'holdings_count': 0,
+                'total_shares': 0,
+                'holdings_details': [],
                 'price_fetch_errors': []
             }
         
@@ -918,6 +1024,8 @@ class PortfolioAPI:
         total_unrealized_pnl_ntd = 0
         total_market_value_ntd = 0
         total_cost_basis_ntd = 0
+        total_shares = 0
+        holdings_details = []
         price_fetch_errors = []
         
         for holding in holdings:
@@ -942,12 +1050,28 @@ class PortfolioAPI:
             total_unrealized_pnl_ntd += unrealized_pnl_ntd
             total_market_value_ntd += market_value_ntd
             total_cost_basis_ntd += cost_basis_ntd
+            total_shares += current_holding
+            
+            # Add detailed holding information
+            holdings_details.append({
+                'symbol': symbol,
+                'broker': broker,
+                'shares': current_holding,
+                'avg_cost': avg_cost,
+                'current_price': current_price,
+                'cost_basis': cost_basis,
+                'market_value': market_value,
+                'unrealized_pnl': unrealized_pnl_ntd,
+                'currency': currency
+            })
         
         return {
             'unrealized_pnl': total_unrealized_pnl_ntd,
             'total_market_value': total_market_value_ntd,
             'total_cost_basis': total_cost_basis_ntd,
             'holdings_count': len(holdings),
+            'total_shares': total_shares,
+            'holdings_details': holdings_details,
             'price_fetch_errors': price_fetch_errors
         }
 
@@ -1448,6 +1572,12 @@ def debug_broker_keys():
 </body>
 </html>'''
 
+@app.route('/test-improvements')
+def test_improvements():
+    """Test page for portfolio improvements"""
+    with open('test_improvements.html', 'r', encoding='utf-8') as f:
+        return f.read()
+
 @app.route('/')
 def index():
     """Main dashboard page"""
@@ -1705,9 +1835,12 @@ def api_unrealized_pnl():
             broker_list = request.args.getlist('broker')
             filters['broker'] = broker_list if len(broker_list) > 1 else broker_list[0] if broker_list else None
         
+        print(f"Debug - unrealized-pnl filters: {filters}")
         result = portfolio_api.calculate_unrealized_pnl(filters)
+        print(f"Debug - unrealized-pnl result: {result}")
         return jsonify(result)
     except Exception as e:
+        print(f"Debug - unrealized-pnl error: {e}")
         return jsonify({
             'error': str(e),
             'unrealized_pnl': 0,
@@ -1716,6 +1849,173 @@ def api_unrealized_pnl():
             'holdings_count': 0,
             'price_fetch_errors': []
         }), 500
+
+@app.route('/api/debug-summary-detailed')
+def api_debug_summary_detailed():
+    """Debug portfolio summary in detail"""
+    try:
+        api = PortfolioAPI()
+        
+        filters = {'broker': '國泰證券'}
+        
+        # Test the query used by get_portfolio_summary
+        broker_mapping = {
+            '國泰證券': 'CATHAY',
+            'Charles Schwab': 'SCHWAB', 
+            'TD Ameritrade': 'TDA'
+        }
+        
+        query = """
+            SELECT 
+                t.net_amount,
+                t.fee,
+                t.tax,
+                t.transaction_type,
+                t.symbol,
+                t.currency
+            FROM transactions t
+            WHERE 1=1
+        """
+        
+        params = []
+        # Apply the same filter logic as get_portfolio_summary
+        broker_filter = filters['broker']
+        short_name = broker_mapping.get(broker_filter, broker_filter)
+        query += " AND (t.broker = ? OR t.broker = ?)"
+        params.extend([broker_filter, short_name])
+        
+        with api.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            raw_results = cursor.fetchall()
+            
+            # Process results manually
+            total_sales = 0
+            total_purchases = 0
+            total_fees = 0
+            total_taxes = 0
+            
+            for row in raw_results:
+                net_amount, fee, tax, transaction_type, symbol, currency = row
+                net_amount_ntd = api.convert_to_ntd(net_amount or 0, currency or 'NTD')
+                fee_ntd = api.convert_to_ntd(fee or 0, currency or 'NTD')
+                tax_ntd = api.convert_to_ntd(tax or 0, currency or 'NTD')
+                
+                total_fees += fee_ntd
+                total_taxes += tax_ntd
+                
+                if transaction_type == 'SELL':
+                    total_sales += net_amount_ntd
+                elif transaction_type == 'BUY':
+                    total_purchases += abs(net_amount_ntd)
+        
+        # Compare with actual API
+        summary = api.get_portfolio_summary(filters)
+        
+        return jsonify({
+            'raw_query_results_count': len(raw_results),
+            'manual_calculations': {
+                'total_sales': total_sales,
+                'total_purchases': total_purchases,
+                'total_fees': total_fees,
+                'total_taxes': total_taxes
+            },
+            'api_summary': summary,
+            'query_used': query,
+            'params_used': params,
+            'sample_raw_results': raw_results[:3]
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/debug-summary')
+def api_debug_summary():
+    """Debug portfolio summary logic"""
+    try:
+        api = PortfolioAPI()
+        
+        filters = {'broker': '國泰證券'}
+        
+        # Get raw transactions for Cathay
+        transactions = api.get_transactions(filters)
+        
+        # Get portfolio summary
+        summary = api.get_portfolio_summary(filters)
+        
+        # Get breakdown of transaction types
+        transaction_breakdown = {}
+        for t in transactions:
+            tx_type = t['transaction_type']
+            transaction_breakdown[tx_type] = transaction_breakdown.get(tx_type, 0) + 1
+        
+        # Calculate totals manually
+        total_sales = sum([abs(t['net_amount']) for t in transactions if t['transaction_type'] == 'SELL'])
+        total_purchases = sum([abs(t['net_amount']) for t in transactions if t['transaction_type'] == 'BUY'])
+        total_fees = sum([t['fee'] or 0 for t in transactions])
+        
+        return jsonify({
+            'transactions_count': len(transactions),
+            'transaction_types': transaction_breakdown,
+            'manual_calculations': {
+                'total_sales': total_sales,
+                'total_purchases': total_purchases,
+                'total_fees': total_fees
+            },
+            'api_summary': summary,
+            'sample_transactions': transactions[:3]
+        })
+        
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/debug-broker-filter')
+def api_debug_broker_filter():
+    """Debug broker filter logic"""
+    try:
+        api = PortfolioAPI()
+        
+        # Test direct query
+        with api.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM transactions WHERE broker = ?", ['國泰證券'])
+            direct_count = cursor.fetchone()[0]
+            
+            # Test using the API method
+            filters = {'broker': '國泰證券'}
+            transactions = api.get_transactions(filters)
+            api_count = len(transactions)
+            
+            # Test with mapping
+            filters_mapped = {'broker': 'CATHAY'}  
+            transactions_mapped = api.get_transactions(filters_mapped)
+            mapped_count = len(transactions_mapped)
+            
+            return jsonify({
+                'direct_db_query': direct_count,
+                'api_with_chinese_name': api_count,
+                'api_with_mapped_name': mapped_count,
+                'debug_info': {
+                    'filters_used': filters,
+                    'sample_transactions': transactions[:2] if transactions else [],
+                    'broker_mapping': {
+                        '國泰證券': 'CATHAY',
+                        'Charles Schwab': 'SCHWAB', 
+                        'TD Ameritrade': 'TDA'
+                    }
+                }
+            })
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/realized-pnl-breakdown')
 def api_realized_pnl_breakdown():
@@ -1749,6 +2049,51 @@ def api_realized_pnl_breakdown():
         return jsonify({
             'success': False,
             'error': str(e)
+        }), 500
+
+@app.route('/api/debug-holdings')
+def api_debug_holdings():
+    """Debug current holdings calculation with filters"""
+    try:
+        # Get filters from request parameters
+        filters = {}
+        if request.args.getlist('broker'):
+            filters['broker'] = request.args.getlist('broker')
+        if request.args.getlist('symbol'):
+            filters['symbol'] = request.args.getlist('symbol')
+        if request.args.get('year'):
+            filters['year'] = request.args.get('year')
+        if request.args.get('start_date'):
+            filters['start_date'] = request.args.get('start_date')
+        if request.args.get('end_date'):
+            filters['end_date'] = request.args.get('end_date')
+        
+        api = PortfolioAPI()
+        
+        # Get raw holdings data
+        holdings = api._get_current_holdings(filters)
+        
+        # Get unrealized P&L calculation
+        unrealized_data = api.calculate_unrealized_pnl(filters)
+        
+        return jsonify({
+            'success': True,
+            'filters_applied': filters,
+            'raw_holdings_count': len(holdings),
+            'raw_holdings': holdings[:5] if holdings else [],  # First 5 for debugging
+            'unrealized_calculation': unrealized_data,
+            'debug_info': {
+                'total_symbols': len(set([h[0] for h in holdings])) if holdings else 0,
+                'total_brokers': len(set([h[1] for h in holdings])) if holdings else 0,
+                'total_current_shares': sum([h[4] for h in holdings]) if holdings else 0
+            }
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'traceback': traceback.format_exc()
         }), 500
 
 if __name__ == '__main__':
