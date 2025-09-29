@@ -53,11 +53,13 @@ class PortfolioDashboard {
             this.initializeMultiSelectControls();
             console.log('Multi-select controls initialized');
             
-            console.log('Loading transactions...');
+            console.log('Loading transactions (initial - no filters)...');
+            // For initial load, don't apply any filters yet - just load all transactions
+            this.currentFilters = {}; // Explicitly set to empty
             await this.loadTransactions();
             console.log('Transactions loaded');
             
-            console.log('Loading summary...');
+            console.log('Loading summary (initial - no filters)...');
             await this.loadSummary();
             console.log('Summary loaded');
             
@@ -82,9 +84,10 @@ class PortfolioDashboard {
             const symbols = await this.fetchAPI('/api/symbols');
             this.populateSelect('symbolFilter', symbols);
 
-            // Load brokers - API returns array directly now
-            const brokers = await this.fetchAPI('/api/brokers');
-            this.populateSelect('brokerFilter', brokers);
+            // Load brokers - API returns object with brokers array and broker_keys mapping
+            const brokerData = await this.fetchAPI('/api/brokers');
+            this.brokerKeys = brokerData.broker_keys || {};
+            this.populateSelect('brokerFilter', brokerData.brokers || brokerData);
 
             // Populate years (2017-2025)
             const currentYear = new Date().getFullYear();
@@ -326,10 +329,20 @@ class PortfolioDashboard {
                 let selectedValues = Array.from(checkedBoxes).map(checkbox => checkbox.value);
                 
                 // For broker filter, convert display names to backend keys
-                if (containerId === 'brokerFilter' && this.brokerKeys) {
-                    selectedValues = selectedValues.map(displayName => 
-                        this.brokerKeys[displayName] || displayName
-                    );
+                if (containerId === 'brokerFilter') {
+                    if (this.brokerKeys && Object.keys(this.brokerKeys).length > 0) {
+                        console.log('Converting broker display names to backend keys:', selectedValues);
+                        selectedValues = selectedValues.map(displayName => {
+                            const backendKey = this.brokerKeys[displayName] || displayName;
+                            console.log(`${displayName} -> ${backendKey}`);
+                            return backendKey;
+                        });
+                        console.log('Converted broker keys:', selectedValues);
+                    } else {
+                        // If broker keys not loaded yet, don't apply broker filter to avoid empty results
+                        console.warn('Broker keys not loaded yet, skipping broker filter to show all data');
+                        return filters; // Return early without adding broker filter
+                    }
                 }
                 
                 if (selectedValues.length > 0) {

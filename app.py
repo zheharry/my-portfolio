@@ -218,7 +218,7 @@ class PortfolioAPI:
                    for row in cursor.fetchall()]
     
     def get_brokers(self):
-        """Get all unique brokers with normalized names"""
+        """Get all unique brokers with account details for multi-account brokers"""
         # Mapping from short names to full names
         broker_mapping = {
             'CATHAY': '國泰證券',
@@ -228,17 +228,64 @@ class PortfolioAPI:
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT broker FROM transactions WHERE broker IS NOT NULL ORDER BY broker")
-            raw_brokers = [row[0] for row in cursor.fetchall()]
             
-            # Convert to full names and remove duplicates
-            full_names = []
-            for broker in raw_brokers:
+            # Get broker info with account counts to identify multi-account brokers
+            cursor.execute("""
+                SELECT 
+                    t.broker, 
+                    a.account_id, 
+                    a.institution,
+                    COUNT(*) as transaction_count
+                FROM transactions t
+                JOIN accounts a ON t.account_id = a.account_id
+                WHERE t.broker IS NOT NULL 
+                GROUP BY t.broker, a.account_id, a.institution
+                ORDER BY t.broker, a.account_id
+            """)
+            
+            broker_accounts = cursor.fetchall()
+            
+            # Group by broker to check for multiple accounts
+            broker_groups = {}
+            for broker, account_id, institution, trans_count in broker_accounts:
+                if broker not in broker_groups:
+                    broker_groups[broker] = []
+                broker_groups[broker].append({
+                    'account_id': account_id,
+                    'institution': institution,
+                    'transaction_count': trans_count
+                })
+            
+            # Generate broker entries
+            broker_entries = []
+            for broker, accounts in broker_groups.items():
                 full_name = broker_mapping.get(broker, broker)
-                if full_name not in full_names:
-                    full_names.append(full_name)
+                
+                if len(accounts) > 1:
+                    # Multi-account broker: show separate entries for each account
+                    for account_info in accounts:
+                        account_display = f"{full_name} ({account_info['account_id'][-4:]})"  # Show last 4 digits
+                        broker_entries.append({
+                            'key': f"{broker}|{account_info['account_id']}",  # Use composite key for filtering
+                            'display': account_display,
+                            'sort_key': f"{full_name}_{account_info['account_id']}"
+                        })
+                else:
+                    # Single account broker: show as normal
+                    broker_entries.append({
+                        'key': broker,  # Use the short broker code for single accounts
+                        'display': full_name,
+                        'sort_key': full_name
+                    })
             
-            return sorted(full_names)
+            # Sort by display name and return the display names
+            broker_entries.sort(key=lambda x: x['sort_key'])
+            
+            # Return both keys and display names for the frontend
+            return {
+                'brokers': [entry['display'] for entry in broker_entries],
+                'broker_keys': {entry['display']: entry['key'] for entry in broker_entries}
+            }
     
     def get_symbols(self, broker_filters=None):
         """Get all unique symbols, optionally filtered by broker"""
@@ -307,6 +354,38 @@ class PortfolioAPI:
             # Default to treating as NTD if currency is unknown
             return amount
     
+    def _parse_broker_filter(self, broker_filter_list, use_account_join=False):
+        """Parse broker filter list that may contain composite keys (BROKER|ACCOUNT_ID)"""
+        broker_conditions = []
+        params = []
+        
+        # Broker mapping for filtering
+        broker_mapping = {
+            '國泰證券': 'CATHAY',
+            'Charles Schwab': 'SCHWAB', 
+            'TD Ameritrade': 'TDA'
+        }
+        
+        for broker_entry in broker_filter_list:
+            if '|' in broker_entry:
+                # Composite key: specific account
+                broker_short, account_id = broker_entry.split('|', 1)
+                broker_conditions.append("(t.broker = ? AND t.account_id = ?)")
+                params.extend([broker_short, account_id])
+            else:
+                # Regular broker: either full name or short name
+                short_name = broker_mapping.get(broker_entry, broker_entry)
+                if use_account_join:
+                    # When joining with accounts table, use aliases
+                    broker_conditions.append("(t.broker = ? OR a.broker = ? OR a.institution = ?)")
+                    params.extend([short_name, short_name, broker_entry])
+                else:
+                    # When not joining, only use transaction table
+                    broker_conditions.append("t.broker = ?")
+                    params.append(short_name)
+        
+        return broker_conditions, params
+
     def get_transactions(self, filters=None):
         """Get filtered transactions with enhanced filtering and multi-select support"""
         # Broker mapping for filtering
@@ -329,27 +408,26 @@ class PortfolioAPI:
                 query += " AND t.account_id = ?"
                 params.append(filters['account_id'])
             
-            # Handle multi-select broker filter
+            # Handle multi-select broker filter with account separation support
             if filters.get('broker'):
                 broker_filter = filters['broker']
-                if isinstance(broker_filter, list):
-                    if len(broker_filter) > 0:
-                        # Map full names to short names for all brokers
-                        short_names = []
-                        full_names = []
-                        for broker in broker_filter:
-                            short_name = broker_mapping.get(broker, broker)
-                            short_names.append(short_name)
-                            full_names.append(broker)
-                        
-                        placeholders = ','.join(['?' for _ in range(len(short_names) * 3)])
-                        query += f" AND (t.broker IN ({','.join(['?' for _ in short_names])}) OR a.broker IN ({','.join(['?' for _ in short_names])}) OR a.institution IN ({','.join(['?' for _ in full_names])}))"
-                        params.extend(short_names + short_names + full_names)
-                else:
+                if isinstance(broker_filter, list) and len(broker_filter) > 0:
+                    broker_conditions, broker_params = self._parse_broker_filter(broker_filter, use_account_join=True)
+                    if broker_conditions:
+                        query += f" AND ({' OR '.join(broker_conditions)})"
+                        params.extend(broker_params)
+                elif isinstance(broker_filter, str):
                     # Single broker (backward compatibility)
-                    short_name = broker_mapping.get(broker_filter, broker_filter)
-                    query += " AND (t.broker = ? OR a.broker = ? OR a.institution = ?)"
-                    params.extend([short_name, short_name, broker_filter])
+                    if '|' in broker_filter:
+                        # Composite key: specific account
+                        broker_short, account_id = broker_filter.split('|', 1)
+                        query += " AND (t.broker = ? AND t.account_id = ?)"
+                        params.extend([broker_short, account_id])
+                    else:
+                        # Regular broker
+                        short_name = broker_mapping.get(broker_filter, broker_filter)
+                        query += " AND (t.broker = ? OR a.broker = ? OR a.institution = ?)"
+                        params.extend([short_name, short_name, broker_filter])
             
             # Handle multi-select symbol filter
             if filters.get('symbol'):
@@ -435,21 +513,26 @@ class PortfolioAPI:
         
         params = []
         if filters:
-            # Handle multi-select broker filter
+            # Handle multi-select broker filter with account separation support
             if filters.get('broker'):
                 broker_filter = filters['broker']
-                if isinstance(broker_filter, list):
-                    if len(broker_filter) > 0:
-                        # Map full names to short names for all brokers
-                        short_names = [broker_mapping.get(broker, broker) for broker in broker_filter]
-                        placeholders = ','.join(['?' for _ in short_names])
-                        query += f" AND t.broker IN ({placeholders})"
-                        params.extend(short_names)
-                else:
+                if isinstance(broker_filter, list) and len(broker_filter) > 0:
+                    broker_conditions, broker_params = self._parse_broker_filter(broker_filter, use_account_join=False)
+                    if broker_conditions:
+                        query += f" AND ({' OR '.join(broker_conditions)})"
+                        params.extend(broker_params)
+                elif isinstance(broker_filter, str):
                     # Single broker (backward compatibility)
-                    short_name = broker_mapping.get(broker_filter, broker_filter)
-                    query += " AND t.broker = ?"
-                    params.append(short_name)
+                    if '|' in broker_filter:
+                        # Composite key: specific account
+                        broker_short, account_id = broker_filter.split('|', 1)
+                        query += " AND (t.broker = ? AND t.account_id = ?)"
+                        params.extend([broker_short, account_id])
+                    else:
+                        # Regular broker
+                        short_name = broker_mapping.get(broker_filter, broker_filter)
+                        query += " AND t.broker = ?"
+                        params.append(short_name)
             
             # Handle multi-select symbol filter
             if filters.get('symbol'):
@@ -1059,6 +1142,312 @@ portfolio_api = PortfolioAPI()
 # Note: Removed automatic CSV loading to prevent duplicate processing
 # Use the API endpoint /api/process-all-statements to process files manually
 
+@app.route('/test-frontend-sequence')
+def test_frontend_sequence():
+    """Test the exact sequence that happens in frontend"""
+    return '''<!DOCTYPE html>
+<html>
+<head>
+    <title>Frontend Sequence Test</title>
+</head>
+<body>
+    <h1>Frontend Sequence Test</h1>
+    <div id="log"></div>
+    
+    <script>
+        let brokerKeys = {};
+        let log = document.getElementById('log');
+        
+        function logMessage(msg) {
+            log.innerHTML += '<p>' + msg + '</p>';
+            console.log(msg);
+        }
+        
+        // Simulate the exact frontend sequence
+        async function simulateFrontendSequence() {
+            logMessage('=== Starting frontend sequence simulation ===');
+            
+            // Step 1: Load broker options (simulating loadFilterOptions)
+            logMessage('Step 1: Loading filter options...');
+            try {
+                const brokerData = await fetch('/api/brokers').then(r => r.json());
+                brokerKeys = brokerData.broker_keys || {};
+                logMessage('Broker keys loaded: ' + JSON.stringify(brokerKeys));
+                
+                // Simulate checkbox population (all checked by default)
+                const brokers = brokerData.brokers;
+                logMessage('Brokers: ' + JSON.stringify(brokers));
+                
+                // Step 2: Simulate getFilterValues when brokerKeys IS available
+                logMessage('Step 2: Simulating getFilterValues with broker keys available...');
+                const selectedBrokers = brokers; // All brokers selected by default
+                
+                // Convert to backend keys (this is what fixed code should do)
+                let backendKeys;
+                if (brokerKeys && Object.keys(brokerKeys).length > 0) {
+                    backendKeys = selectedBrokers.map(displayName => {
+                        const backendKey = brokerKeys[displayName] || displayName;
+                        logMessage('Converting: ' + displayName + ' -> ' + backendKey);
+                        return backendKey;
+                    });
+                } else {
+                    logMessage('WARNING: Broker keys not available, would skip broker filter');
+                    backendKeys = null;
+                }
+                
+                // Step 3: Test transaction loading with converted keys
+                if (backendKeys) {
+                    logMessage('Step 3: Testing transaction loading with backend keys...');
+                    const params = new URLSearchParams();
+                    backendKeys.forEach(key => params.append('broker', key));
+                    
+                    const transactionUrl = '/api/transactions?' + params.toString();
+                    logMessage('Fetching: ' + transactionUrl);
+                    
+                    const transactions = await fetch(transactionUrl).then(r => r.json());
+                    logMessage('Transaction count: ' + transactions.length);
+                    
+                    // Show breakdown by broker
+                    const brokerBreakdown = {};
+                    transactions.forEach(t => {
+                        brokerBreakdown[t.broker] = (brokerBreakdown[t.broker] || 0) + 1;
+                    });
+                    logMessage('Broker breakdown: ' + JSON.stringify(brokerBreakdown));
+                } else {
+                    logMessage('Step 3: Would load all transactions (no broker filter applied)');
+                    const transactions = await fetch('/api/transactions').then(r => r.json());
+                    logMessage('All transactions count: ' + transactions.length);
+                }
+                
+                logMessage('=== Sequence completed successfully ===');
+                
+            } catch (error) {
+                logMessage('ERROR: ' + error.toString());
+            }
+        }
+        
+        // Start the test
+        simulateFrontendSequence();
+    </script>
+</body>
+</html>'''
+
+@app.route('/simple-test')
+def simple_test():
+    """Simple test page to verify JavaScript broker key logic"""
+    return '''<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Test</title>
+</head>
+<body>
+    <h1>Simple Broker Test</h1>
+    
+    <h2>Broker Selection</h2>
+    <div>
+        <label><input type="checkbox" value="Charles Schwab (2563)" checked> Charles Schwab (2563)</label><br>
+        <label><input type="checkbox" value="Charles Schwab (7088)" checked> Charles Schwab (7088)</label><br>
+        <label><input type="checkbox" value="TD Ameritrade" checked> TD Ameritrade</label><br>
+        <label><input type="checkbox" value="國泰證券" checked> 國泰證券</label><br>
+    </div>
+    
+    <button onclick="testBrokerMapping()">Test Broker Mapping</button>
+    <button onclick="loadTransactions()">Load Transactions</button>
+    
+    <div id="output"></div>
+    
+    <script>
+        let brokerKeys = {};
+        
+        async function loadBrokerKeys() {
+            try {
+                const response = await fetch('/api/brokers');
+                const brokerData = await response.json();
+                brokerKeys = brokerData.broker_keys || {};
+                console.log('Broker keys loaded:', brokerKeys);
+                return brokerKeys;
+            } catch (error) {
+                console.error('Error loading broker keys:', error);
+                return {};
+            }
+        }
+        
+        function getSelectedBrokers() {
+            const checkboxes = document.querySelectorAll('input[type="checkbox"]:checked');
+            return Array.from(checkboxes).map(cb => cb.value);
+        }
+        
+        function convertToBackendKeys(displayNames) {
+            if (!brokerKeys || Object.keys(brokerKeys).length === 0) {
+                console.warn('Broker keys not loaded yet');
+                return displayNames;
+            }
+            
+            return displayNames.map(displayName => {
+                const backendKey = brokerKeys[displayName] || displayName;
+                console.log(`Converting: ${displayName} -> ${backendKey}`);
+                return backendKey;
+            });
+        }
+        
+        async function testBrokerMapping() {
+            const output = document.getElementById('output');
+            output.innerHTML = '<h3>Test Results:</h3>';
+            
+            // Ensure broker keys are loaded
+            await loadBrokerKeys();
+            
+            // Get selected brokers
+            const selectedDisplayNames = getSelectedBrokers();
+            output.innerHTML += `<p>Selected display names: ${JSON.stringify(selectedDisplayNames)}</p>`;
+            
+            // Convert to backend keys
+            const backendKeys = convertToBackendKeys(selectedDisplayNames);
+            output.innerHTML += `<p>Backend keys: ${JSON.stringify(backendKeys)}</p>`;
+        }
+        
+        async function loadTransactions() {
+            const output = document.getElementById('output');
+            
+            try {
+                // Ensure broker keys are loaded
+                await loadBrokerKeys();
+                
+                // Get selected brokers and convert
+                const selectedDisplayNames = getSelectedBrokers();
+                const backendKeys = convertToBackendKeys(selectedDisplayNames);
+                
+                // Build URL
+                const params = new URLSearchParams();
+                backendKeys.forEach(key => params.append('broker', key));
+                
+                const url = `/api/transactions?${params}`;
+                console.log('Fetching:', url);
+                
+                const response = await fetch(url);
+                const transactions = await response.json();
+                
+                output.innerHTML += `<h3>Transaction Results:</h3>`;
+                output.innerHTML += `<p>URL: ${url}</p>`;
+                output.innerHTML += `<p>Transaction count: ${transactions.length}</p>`;
+                
+                // Show broker breakdown
+                const brokerCounts = {};
+                transactions.forEach(t => {
+                    brokerCounts[t.broker] = (brokerCounts[t.broker] || 0) + 1;
+                });
+                
+                output.innerHTML += `<p>Broker breakdown: ${JSON.stringify(brokerCounts)}</p>`;
+                
+            } catch (error) {
+                output.innerHTML += `<p>Error: ${error}</p>`;
+            }
+        }
+        
+        // Load broker keys on page load
+        loadBrokerKeys();
+    </script>
+</body>
+</html>'''
+
+@app.route('/test-schwab-filter')
+def test_schwab_filter():
+    """Test Schwab filtering with different approaches"""
+    try:
+        # Get broker data
+        broker_data = portfolio_api.get_brokers()
+        broker_keys = broker_data['broker_keys']
+        
+        # Simulate what frontend would send initially (display names)
+        schwab_display_names = [name for name in broker_data['brokers'] if 'Charles Schwab' in name]
+        
+        # Convert to backend keys
+        schwab_backend_keys = [broker_keys[name] for name in schwab_display_names]
+        
+        # Test transactions with display names (this should fail)
+        display_filters = {'broker': schwab_display_names}
+        display_transactions = portfolio_api.get_transactions(display_filters)
+        
+        # Test transactions with backend keys (this should work)
+        backend_filters = {'broker': schwab_backend_keys}
+        backend_transactions = portfolio_api.get_transactions(backend_filters)
+        
+        # Test all transactions
+        all_transactions = portfolio_api.get_transactions()
+        
+        return jsonify({
+            'broker_data': broker_data,
+            'schwab_display_names': schwab_display_names,
+            'schwab_backend_keys': schwab_backend_keys,
+            'all_transactions_count': len(all_transactions),
+            'display_names_result_count': len(display_transactions),
+            'backend_keys_result_count': len(backend_transactions),
+            'test_passed': len(backend_transactions) > 0 and len(display_transactions) == 0
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
+@app.route('/debug')
+def debug_broker_keys():
+    """Debug broker keys mapping"""
+    return '''<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Broker Keys</title>
+</head>
+<body>
+    <h1>Debug Broker Keys</h1>
+    <div id="output"></div>
+    
+    <script>
+        async function debugBrokerKeys() {
+            const output = document.getElementById('output');
+            
+            try {
+                // Test the broker API
+                const response = await fetch('/api/brokers');
+                const brokerData = await response.json();
+                
+                output.innerHTML += '<h2>Broker API Response:</h2>';
+                output.innerHTML += '<pre>' + JSON.stringify(brokerData, null, 2) + '</pre>';
+                
+                // Test broker key mapping
+                const brokerKeys = brokerData.broker_keys;
+                const brokers = brokerData.brokers;
+                
+                output.innerHTML += '<h2>Mapping Test:</h2>';
+                brokers.forEach(displayName => {
+                    const backendKey = brokerKeys[displayName] || displayName;
+                    output.innerHTML += `<p>${displayName} -> ${backendKey}</p>`;
+                });
+                
+                // Test transaction API with backend keys
+                output.innerHTML += '<h2>Transaction Count Tests:</h2>';
+                
+                // Test with no filters
+                const allTransactions = await fetch('/api/transactions');
+                const allData = await allTransactions.json();
+                output.innerHTML += `<p>All transactions: ${allData.length}</p>`;
+                
+                // Test with specific Schwab account backend key
+                const schwabKey1 = brokerKeys['Charles Schwab (2563)'];
+                if (schwabKey1) {
+                    const schwabResponse = await fetch(`/api/transactions?broker=${encodeURIComponent(schwabKey1)}`);
+                    const schwabData = await schwabResponse.json();
+                    output.innerHTML += `<p>Schwab (2563) transactions: ${schwabData.length}</p>`;
+                }
+                
+            } catch (error) {
+                output.innerHTML += '<h2>Error:</h2>';
+                output.innerHTML += '<pre>' + error.toString() + '</pre>';
+            }
+        }
+        
+        debugBrokerKeys();
+    </script>
+</body>
+</html>'''
+
 @app.route('/')
 def index():
     """Main dashboard page"""
@@ -1073,9 +1462,10 @@ def api_accounts():
 
 @app.route('/api/brokers')
 def api_brokers():
-    """Get all brokers"""
-    brokers = portfolio_api.get_brokers()
-    return jsonify(brokers)
+    """Get all brokers with account separation"""
+    broker_data = portfolio_api.get_brokers()
+    # Return both broker names and keys for frontend processing
+    return jsonify(broker_data)
 
 @app.route('/api/symbols')
 def api_symbols():
@@ -1365,4 +1755,5 @@ if __name__ == '__main__':
     # Ensure templates directory exists
     os.makedirs('templates', exist_ok=True)
     
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get('FLASK_PORT', '5000'))
+    app.run(debug=True, port=port)

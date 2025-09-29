@@ -184,9 +184,6 @@ class MultiBrokerPortfolioParser:
         # Cathay Securities CSV files
         elif file_path.suffix.lower() == '.csv':
             return 'CATHAY'
-        # Cathay Securities TXT files (concurrent investment format)
-        elif file_path.suffix.lower() == '.txt' and ('cathay' in file_name.lower() or 'concurrent investment' in file_name.lower()):
-            return 'CATHAY_TXT'
         else:
             self.logger.warning(f"Could not identify broker for {file_name}")
             return 'UNKNOWN'
@@ -1028,129 +1025,6 @@ class MultiBrokerPortfolioParser:
             self.logger.error(f"Error parsing CSV {csv_path}: {e}")
             return None
     
-    def parse_cathay_txt(self, txt_path: Path) -> Dict:
-        """Parse Cathay concurrent investment TXT data"""
-        try:
-            self.logger.info(f"Parsing Cathay TXT file: {txt_path}")
-            
-            # Symbol mapping for better display names
-            symbol_mapping = {
-                '006208': '富邦台50',
-                '2330': '台積電',
-                '2454': '聯發科'
-            }
-            
-            # Read TXT file
-            with open(txt_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Convert to standard format
-            data = {
-                'account_info': {
-                    'account_id': 'CATHAY-TXT-001',
-                    'institution': '國泰證券',
-                    'account_type': '定期定額投資',
-                    'broker': '國泰證券',
-                    'account_holder': 'Default'
-                },
-                'transactions': [],
-                'positions': [],
-                'balances': {}
-            }
-            
-            # Split content into stock sections
-            sections = re.split(r'\n(?=\d{4,6}\s+[^\n]+ \([^)]+\) 交易明細)', content)
-            
-            for section in sections:
-                if not section.strip():
-                    continue
-                
-                lines = section.strip().split('\n')
-                if len(lines) < 3:  # Need at least header, column headers, and one data line
-                    continue
-                
-                # Extract stock symbol and name from first line
-                header_match = re.match(r'(\d{4,6})\s+([^(]+)\s*\([^)]*\)', lines[0])
-                if not header_match:
-                    continue
-                
-                symbol = header_match.group(1)
-                stock_name = header_match.group(2).strip()
-                
-                # Use mapped symbol name if available
-                display_symbol = symbol_mapping.get(symbol, symbol)
-                
-                # Skip header and column header lines
-                data_lines = lines[2:]
-                
-                for line in data_lines:
-                    if not line.strip():
-                        continue
-                    
-                    # Parse transaction line
-                    # Format: 2025/03/27	961.40	128,828
-                    # Or: 2025/01/13	1,089.80	4,360 (股息再投資)
-                    
-                    # Split by tabs or multiple spaces
-                    parts = re.split(r'\t+|\s{2,}', line.strip())
-                    if len(parts) < 3:
-                        continue
-                    
-                    try:
-                        date_str = parts[0]
-                        price_str = parts[1].replace(',', '')
-                        amount_str = parts[2]
-                        
-                        # Check for dividend reinvestment
-                        is_dividend_reinvestment = '股息再投資' in line
-                        
-                        # Extract amount (remove comma and any notes in parentheses)
-                        amount_match = re.match(r'([\d,]+)', amount_str.replace(',', ''))
-                        if not amount_match:
-                            continue
-                        
-                        amount = float(amount_match.group(1))
-                        price = float(price_str)
-                        
-                        # Calculate quantity (integer only for Taiwan stocks)
-                        quantity = int(round(amount / price))
-                        
-                        # Format date to YYYY-MM-DD
-                        date_parts = date_str.split('/')
-                        if len(date_parts) == 3:
-                            formatted_date = f"{date_parts[0]}-{date_parts[1].zfill(2)}-{date_parts[2].zfill(2)}"
-                        else:
-                            continue
-                        
-                        # Create transaction
-                        transaction = {
-                            'transaction_date': formatted_date,
-                            'settle_date': formatted_date,  # Use same date for settle
-                            'account_type': '定期定額投資',
-                            'transaction_type': 'DIVIDEND' if is_dividend_reinvestment else 'BUY',
-                            'description': f"{'股息再投資' if is_dividend_reinvestment else '定期定額買進'} {display_symbol}",
-                            'symbol': display_symbol,  # Use mapped symbol name
-                            'quantity': quantity,
-                            'price': price,
-                            'amount': amount,
-                            'fee': 0,  # Fees not specified in this format
-                            'tax': 0,  # Tax not specified in this format
-                            'realized_gain_loss': 0
-                        }
-                        
-                        data['transactions'].append(transaction)
-                        
-                    except (ValueError, IndexError) as e:
-                        self.logger.error(f"Error parsing transaction line '{line}': {e}")
-                        continue
-            
-            self.logger.info(f"Successfully parsed {len(data['transactions'])} transactions from {txt_path}")
-            return data
-            
-        except Exception as e:
-            self.logger.error(f"Error parsing TXT {txt_path}: {e}")
-            return None
-
     def store_account_data(self, data: Dict, file_path: Path, broker: str):
         """Store account information in database"""
         if not data.get('account_info'):
@@ -1213,7 +1087,7 @@ class MultiBrokerPortfolioParser:
                 cursor.execute("ALTER TABLE transactions ADD COLUMN currency TEXT DEFAULT 'USD'")
             
             # Determine currency and display broker name based on broker type
-            if broker in ['CATHAY', 'CATHAY_TXT']:
+            if broker == 'CATHAY':
                 currency = 'NTD'
                 display_broker = '國泰證券'
             else:
@@ -1308,9 +1182,6 @@ class MultiBrokerPortfolioParser:
                     
             elif broker == 'CATHAY':
                 data = self.parse_cathay_csv(file_path)
-                
-            elif broker == 'CATHAY_TXT':
-                data = self.parse_cathay_txt(file_path)
             
             if data:
                 # Store data
@@ -1397,7 +1268,7 @@ class MultiBrokerPortfolioParser:
             self.logger.error(f"Error updating missing net_amounts: {e}")
 
     def process_all_statements(self):
-        """Process all PDF, CSV, and TXT statements"""
+        """Process all PDF and CSV statements"""
         if not self.statements_dir.exists():
             self.logger.error(f"Statements directory not found: {self.statements_dir}")
             return
@@ -1408,13 +1279,6 @@ class MultiBrokerPortfolioParser:
         # Process CSV files (國泰證券)
         for csv_file in self.statements_dir.rglob("*.csv"):
             if self.process_file(csv_file):
-                processed += 1
-            else:
-                failed += 1
-        
-        # Process TXT files (Cathay concurrent investment)
-        for txt_file in self.statements_dir.rglob("*.txt"):
-            if self.process_file(txt_file):
                 processed += 1
             else:
                 failed += 1
