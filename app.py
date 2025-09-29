@@ -16,7 +16,11 @@ class PortfolioAPI:
         self._forex_cache = {}
         self._stock_price_cache = {}
         self._cache_timestamp = None
-        self._cache_duration = 300  # 5 minutes cache duration
+        self._cache_duration = 1800  # 30 minutes cache duration (increased from 5 minutes)
+        self._request_count = 0  # Track API requests for rate limiting
+        self._last_request_time = None
+        self._yahoo_finance_available = True  # Circuit breaker for Yahoo Finance
+        self._last_yahoo_check = None
         self.ensure_database_exists()
     
     def ensure_database_exists(self):
@@ -351,8 +355,62 @@ class PortfolioAPI:
         import time
         return (time.time() - self._cache_timestamp) < self._cache_duration
     
+    def _throttle_requests(self):
+        """Implement request throttling to avoid rate limits"""
+        import time
+        
+        current_time = time.time()
+        
+        # Reset counter every hour
+        if self._last_request_time is None or (current_time - self._last_request_time) > 3600:
+            self._request_count = 0
+            self._last_request_time = current_time
+        
+        # If we've made too many requests, add a longer delay
+        if self._request_count > 50:  # Conservative limit
+            delay = min(2.0 + (self._request_count - 50) * 0.1, 5.0)  # Cap at 5 seconds
+            print(f"Rate limiting: sleeping for {delay:.1f}s (request #{self._request_count})")
+            time.sleep(delay)
+        
+        self._request_count += 1
+        self._last_request_time = current_time
+    
+    def _check_yahoo_finance_availability(self):
+        """Check if Yahoo Finance is available and implement circuit breaker"""
+        import time
+        
+        current_time = time.time()
+        
+        # Check every 10 minutes
+        if self._last_yahoo_check is None or (current_time - self._last_yahoo_check) > 600:
+            # Try a simple request to check availability
+            try:
+                import yfinance as yf
+                test_ticker = yf.Ticker("AAPL")
+                test_hist = test_ticker.history(period="1d")
+                
+                if not test_hist.empty:
+                    self._yahoo_finance_available = True
+                    print("Yahoo Finance availability check: OK")
+                else:
+                    self._yahoo_finance_available = False
+                    print("Yahoo Finance availability check: No data returned")
+                    
+            except Exception as e:
+                error_msg = str(e).lower()
+                if 'too many requests' in error_msg or '429' in error_msg or 'rate limit' in error_msg:
+                    self._yahoo_finance_available = False
+                    print("Yahoo Finance availability check: Rate limited")
+                else:
+                    self._yahoo_finance_available = False
+                    print(f"Yahoo Finance availability check: Error - {e}")
+            
+            self._last_yahoo_check = current_time
+        
+        return self._yahoo_finance_available
+    
     def get_forex_rate(self, from_currency, to_currency):
-        """Get forex rates from Yahoo Finance with caching"""
+        """Get forex rates from Yahoo Finance with caching and rate limiting protection"""
         if from_currency == to_currency:
             return 1.0
         
@@ -379,15 +437,46 @@ class PortfolioAPI:
         forex_symbol = forex_mapping.get((from_currency, to_currency))
         rate = None
         
-        if forex_symbol:
+        if forex_symbol and self._check_yahoo_finance_availability():
             try:
                 import yfinance as yf
+                import time
+                import random
+                
+                # Apply request throttling
+                self._throttle_requests()
+                
                 ticker = yf.Ticker(forex_symbol)
-                hist = ticker.history(period="1d")
-                if not hist.empty:
-                    rate = hist['Close'].iloc[-1]
+                
+                # Try different methods with better error handling
+                try:
+                    # Method 1: Recent history (less likely to be rate limited)
+                    hist = ticker.history(period="2d", interval="1d")
+                    if not hist.empty:
+                        rate = hist['Close'].iloc[-1]
+                except Exception as hist_error:
+                    print(f"History method failed for {forex_symbol}: {hist_error}")
+                    
+                    # Method 2: Try ticker info as fallback
+                    try:
+                        time.sleep(random.uniform(0.3, 0.7))
+                        info = ticker.info
+                        if info and 'regularMarketPrice' in info and info['regularMarketPrice']:
+                            rate = info['regularMarketPrice']
+                        elif info and 'previousClose' in info and info['previousClose']:
+                            rate = info['previousClose']
+                    except Exception as info_error:
+                        print(f"Info method failed for {forex_symbol}: {info_error}")
+                        
             except Exception as e:
-                print(f"Error fetching forex rate {from_currency}/{to_currency}: {e}")
+                error_msg = str(e).lower()
+                if 'too many requests' in error_msg or '429' in error_msg or 'rate limit' in error_msg:
+                    print(f"Rate limited fetching forex rate {from_currency}/{to_currency}, using fallback")
+                    self._yahoo_finance_available = False  # Temporarily disable
+                else:
+                    print(f"Error fetching forex rate {from_currency}/{to_currency}: {e}")
+        elif forex_symbol:
+            print(f"Yahoo Finance unavailable, using fallback rate for {from_currency}/{to_currency}")
         
         # Use fallback rates if Yahoo Finance fails
         if rate is None:
@@ -398,6 +487,7 @@ class PortfolioAPI:
                 ('NTD', 'USD'): 1/31.5
             }
             rate = fallback_rates.get((from_currency, to_currency), 1.0)
+            print(f"Using fallback rate for {from_currency}/{to_currency}: {rate}")
         
         # Cache the result
         self._forex_cache[cache_key] = rate
@@ -1052,8 +1142,8 @@ class PortfolioAPI:
             else:
                 symbols_to_fetch.append(symbol_info)
         
-        # Fetch only uncached symbols
-        for symbol_info in symbols_to_fetch:
+        # Fetch only uncached symbols with rate limiting protection
+        for i, symbol_info in enumerate(symbols_to_fetch):
             if isinstance(symbol_info, tuple):
                 symbol, broker = symbol_info
             else:
@@ -1061,6 +1151,12 @@ class PortfolioAPI:
                 broker = None
             
             try:
+                import time
+                import random
+                
+                # Apply request throttling
+                self._throttle_requests()
+                
                 # Get enhanced Yahoo symbol
                 yahoo_symbol = self._get_yahoo_symbol(symbol, broker)
                 ticker = yf.Ticker(yahoo_symbol)
@@ -1070,33 +1166,47 @@ class PortfolioAPI:
                 
                 # Method 1: Historical data with appropriate period
                 try:
-                    period = "5d" if ".TW" in yahoo_symbol else "1d"
-                    hist = ticker.history(period=period)
+                    period = "5d" if ".TW" in yahoo_symbol else "2d"  # Extended period for better data
+                    hist = ticker.history(period=period, interval="1d")
                     
                     if not hist.empty:
                         current_price = hist['Close'].iloc[-1]
                 except Exception as e:
-                    print(f"Historical data failed for {yahoo_symbol}: {e}")
+                    error_msg = str(e).lower()
+                    if 'too many requests' in error_msg or '429' in error_msg or 'rate limit' in error_msg:
+                        print(f"Rate limited on historical data for {yahoo_symbol}, trying alternative methods")
+                    else:
+                        print(f"Historical data failed for {yahoo_symbol}: {e}")
                 
                 # Method 2: Try ticker info for real-time price
                 if current_price is None:
                     try:
+                        time.sleep(random.uniform(0.2, 0.5))  # Small delay between methods
                         info = ticker.info
                         if info and 'regularMarketPrice' in info and info['regularMarketPrice']:
                             current_price = info['regularMarketPrice']
                         elif info and 'previousClose' in info and info['previousClose']:
                             current_price = info['previousClose']
                     except Exception as e:
-                        print(f"Ticker info failed for {yahoo_symbol}: {e}")
+                        error_msg = str(e).lower()
+                        if 'too many requests' in error_msg or '429' in error_msg or 'rate limit' in error_msg:
+                            print(f"Rate limited on info for {yahoo_symbol}")
+                        else:
+                            print(f"Ticker info failed for {yahoo_symbol}: {e}")
                 
                 # Method 3: Try fast_info (newer yfinance feature)
                 if current_price is None:
                     try:
+                        time.sleep(random.uniform(0.2, 0.5))  # Small delay between methods
                         fast_info = ticker.fast_info
                         if hasattr(fast_info, 'last_price') and fast_info.last_price:
                             current_price = fast_info.last_price
                     except Exception as e:
-                        print(f"Fast info failed for {yahoo_symbol}: {e}")
+                        error_msg = str(e).lower()
+                        if 'too many requests' in error_msg or '429' in error_msg or 'rate limit' in error_msg:
+                            print(f"Rate limited on fast_info for {yahoo_symbol}")
+                        else:
+                            print(f"Fast info failed for {yahoo_symbol}: {e}")
                 
                 if current_price is not None and current_price > 0:
                     prices[symbol] = current_price
@@ -1106,6 +1216,7 @@ class PortfolioAPI:
                     if self._cache_timestamp is None:
                         import time
                         self._cache_timestamp = time.time()
+                    print(f"Successfully fetched price for {symbol}: {current_price}")
                 else:
                     prices[symbol] = None
                     # Cache the None result to avoid repeated failed requests
@@ -1113,17 +1224,30 @@ class PortfolioAPI:
                     errors.append({
                         'symbol': symbol,
                         'yahoo_symbol': yahoo_symbol,
-                        'error': 'No price data available'
+                        'error': 'No price data available after trying all methods'
                     })
                     
             except Exception as e:
-                print(f"Error fetching price for {symbol} ({yahoo_symbol}): {e}")
-                prices[symbol] = None
-                # Cache the None result to avoid repeated failed requests
-                self._stock_price_cache[symbol] = None
+                yahoo_symbol = 'unknown'
+                try:
+                    yahoo_symbol = self._get_yahoo_symbol(symbol, broker)
+                except:
+                    pass
+                
+                error_msg = str(e).lower()
+                if 'too many requests' in error_msg or '429' in error_msg or 'rate limit' in error_msg:
+                    print(f"Rate limited fetching price for {symbol} ({yahoo_symbol}), will use fallback")
+                    # For rate limiting, don't cache the error to allow retry later
+                    prices[symbol] = None
+                else:
+                    print(f"Error fetching price for {symbol} ({yahoo_symbol}): {e}")
+                    prices[symbol] = None
+                    # Cache the None result to avoid repeated failed requests
+                    self._stock_price_cache[symbol] = None
+                    
                 errors.append({
                     'symbol': symbol,
-                    'yahoo_symbol': yahoo_symbol if 'yahoo_symbol' in locals() else 'unknown',
+                    'yahoo_symbol': yahoo_symbol,
                     'error': str(e)
                 })
         
@@ -1148,43 +1272,71 @@ class PortfolioAPI:
             self._stock_price_cache.clear()
             self._forex_cache.clear()
         
-        # Fetch only uncached symbols
-        for symbol in symbols_to_fetch:
+        # Fetch only uncached symbols with rate limiting protection
+        for i, symbol in enumerate(symbols_to_fetch):
             try:
+                import time
+                import random
+                
+                # Apply request throttling
+                self._throttle_requests()
+                
                 # Handle different stock markets
                 yahoo_symbol = self._get_yahoo_symbol(symbol)
                 ticker = yf.Ticker(yahoo_symbol)
                 
                 # Use longer period for Taiwan stocks for better data availability
-                period = "5d" if ".TW" in yahoo_symbol else "1d"
-                hist = ticker.history(period=period)
+                period = "5d" if ".TW" in yahoo_symbol else "2d"
                 
-                if not hist.empty:
-                    current_price = hist['Close'].iloc[-1]
-                    prices[symbol] = current_price
-                    # Cache the result
-                    self._stock_price_cache[symbol] = current_price
-                else:
-                    # Try alternative method for Taiwan stocks
-                    if ".TW" in yahoo_symbol:
-                        try:
-                            info = ticker.info
-                            if info and 'regularMarketPrice' in info:
-                                prices[symbol] = info['regularMarketPrice']
-                                self._stock_price_cache[symbol] = info['regularMarketPrice']
-                            else:
+                try:
+                    hist = ticker.history(period=period)
+                    
+                    if not hist.empty:
+                        current_price = hist['Close'].iloc[-1]
+                        prices[symbol] = current_price
+                        # Cache the result
+                        self._stock_price_cache[symbol] = current_price
+                    else:
+                        # Try alternative method for Taiwan stocks
+                        if ".TW" in yahoo_symbol:
+                            try:
+                                time.sleep(random.uniform(0.3, 0.7))
+                                info = ticker.info
+                                if info and 'regularMarketPrice' in info:
+                                    prices[symbol] = info['regularMarketPrice']
+                                    self._stock_price_cache[symbol] = info['regularMarketPrice']
+                                else:
+                                    prices[symbol] = None
+                                    self._stock_price_cache[symbol] = None
+                            except Exception as info_error:
+                                error_msg = str(info_error).lower()
+                                if 'too many requests' in error_msg or '429' in error_msg or 'rate limit' in error_msg:
+                                    print(f"Rate limited on info method for {yahoo_symbol}")
                                 prices[symbol] = None
                                 self._stock_price_cache[symbol] = None
-                        except:
+                        else:
                             prices[symbol] = None
                             self._stock_price_cache[symbol] = None
+                except Exception as hist_error:
+                    error_msg = str(hist_error).lower()
+                    if 'too many requests' in error_msg or '429' in error_msg or 'rate limit' in error_msg:
+                        print(f"Rate limited on history method for {yahoo_symbol}, skipping caching")
+                        prices[symbol] = None
+                        # Don't cache rate limit errors to allow retry later
                     else:
+                        print(f"History fetch failed for {yahoo_symbol}: {hist_error}")
                         prices[symbol] = None
                         self._stock_price_cache[symbol] = None
                     
             except Exception as e:
-                print(f"Error fetching price for {symbol}: {e}")
-                prices[symbol] = None
+                error_msg = str(e).lower()
+                if 'too many requests' in error_msg or '429' in error_msg or 'rate limit' in error_msg:
+                    print(f"Rate limited fetching price for {symbol}, will retry later")
+                    prices[symbol] = None
+                    # Don't cache rate limit errors
+                else:
+                    print(f"Error fetching price for {symbol}: {e}")
+                    prices[symbol] = None
         return prices
     
     def _get_yahoo_symbol(self, symbol, broker=None):
@@ -2209,6 +2361,47 @@ def api_unrealized_pnl_enhanced():
             'price_fetch_errors': [],
             'forex_rates_used': {},
             'base_currency': 'NTD'
+        }), 500
+
+@app.route('/api/system-status')
+def api_system_status():
+    """Get system status including Yahoo Finance availability"""
+    try:
+        api = PortfolioAPI()
+        
+        # Check Yahoo Finance availability
+        yahoo_available = api._check_yahoo_finance_availability()
+        
+        # Get cache status
+        cache_valid = api._is_cache_valid()
+        cache_info = {
+            'valid': cache_valid,
+            'timestamp': api._cache_timestamp,
+            'duration': api._cache_duration,
+            'forex_entries': len(api._forex_cache),
+            'stock_price_entries': len(api._stock_price_cache)
+        }
+        
+        # Get request throttling info
+        throttling_info = {
+            'request_count': api._request_count,
+            'last_request_time': api._last_request_time,
+            'yahoo_finance_available': api._yahoo_finance_available,
+            'last_yahoo_check': api._last_yahoo_check
+        }
+        
+        return jsonify({
+            'success': True,
+            'yahoo_finance_available': yahoo_available,
+            'cache_info': cache_info,
+            'throttling_info': throttling_info,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
         }), 500
 
 @app.route('/api/forex-rates')
