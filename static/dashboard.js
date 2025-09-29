@@ -11,6 +11,8 @@ class PortfolioDashboard {
         try {
             this.initializeEventListeners();
             console.log('Event listeners initialized');
+            this.initializeDateRangeValidation();
+            console.log('Date range validation initialized');
             this.loadInitialData();
         } catch (error) {
             console.error('Error in constructor:', error);
@@ -34,6 +36,52 @@ class PortfolioDashboard {
                 element.addEventListener('change', () => this.applyFilters());
             }
         });
+    }
+
+    // Initialize date range validation
+    initializeDateRangeValidation() {
+        const startDateInput = document.getElementById('startDateFilter');
+        const endDateInput = document.getElementById('endDateFilter');
+        const errorDiv = document.getElementById('dateRangeError');
+
+        if (!startDateInput || !endDateInput || !errorDiv) {
+            console.warn('Date range inputs not found');
+            return;
+        }
+
+        // Add validation on date change
+        const validateDateRange = () => {
+            const startDate = startDateInput.value;
+            const endDate = endDateInput.value;
+
+            // Clear previous validation state
+            startDateInput.classList.remove('is-invalid');
+            endDateInput.classList.remove('is-invalid');
+            errorDiv.style.display = 'none';
+
+            // Only validate if both dates are selected
+            if (startDate && endDate) {
+                if (endDate < startDate) {
+                    // End date is before start date - show error
+                    startDateInput.classList.add('is-invalid');
+                    endDateInput.classList.add('is-invalid');
+                    errorDiv.style.display = 'block';
+                    
+                    console.log('Date range validation error: End date is before start date');
+                    return false;
+                } else {
+                    console.log('Date range selected:', startDate, 'to', endDate);
+                    return true;
+                }
+            }
+            return true; // No validation error if not both dates selected
+        };
+
+        // Add event listeners for validation
+        startDateInput.addEventListener('change', validateDateRange);
+        endDateInput.addEventListener('change', validateDateRange);
+
+        console.log('Date range validation initialized');
     }
 
     // Load initial data
@@ -292,6 +340,15 @@ class PortfolioDashboard {
         multiSelectContainers.forEach(containerId => {
             this.selectAllItems(containerId);
         });
+
+        // Clear date range validation state
+        const startDateInput = document.getElementById('startDateFilter');
+        const endDateInput = document.getElementById('endDateFilter');
+        const errorDiv = document.getElementById('dateRangeError');
+        
+        if (startDateInput) startDateInput.classList.remove('is-invalid');
+        if (endDateInput) endDateInput.classList.remove('is-invalid');
+        if (errorDiv) errorDiv.style.display = 'none';
         
         this.currentFilters = {};
         this.applyFilters();
