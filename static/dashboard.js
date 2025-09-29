@@ -526,6 +526,7 @@ class PortfolioDashboard {
         realizedPLElement.className = realizedPL >= 0 ? 'gain' : 'loss';
         
         document.getElementById('totalFees').textContent = `NT$${this.formatNumber(summary.total_fees || 0)}`;
+        document.getElementById('totalTax').textContent = `NT$${this.formatNumber(summary.total_taxes || 0)}`;
         
         const netProfit = summary.net_after_fees || 0;
         const netProfitElement = document.getElementById('netProfit');

@@ -381,7 +381,7 @@
 
         <!-- Filtered Metrics Row -->
         <div class="row mb-4" id="filteredMetrics">
-            <div class="col-md-3">
+            <div class="col-md">
                 <div class="card summary-card" style="border-left: 4px solid #007bff;">
                     <div class="card-body text-center">
                         <h5 class="card-title">總投資額 (Total Investment)</h5>
@@ -390,7 +390,7 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md">
                 <div class="card summary-card" style="border-left: 4px solid #28a745;">
                     <div class="card-body text-center">
                         <h5 class="card-title">已實現損益 (Realized P&L)</h5>
@@ -399,7 +399,7 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md">
                 <div class="card summary-card" style="border-left: 4px solid #ffc107;">
                     <div class="card-body text-center">
                         <h5 class="card-title">總手續費 (Total Fees)</h5>
@@ -408,11 +408,20 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md">
+                <div class="card summary-card" style="border-left: 4px solid #fd7e14;">
+                    <div class="card-body text-center">
+                        <h5 class="card-title">總稅金 (Total Tax)</h5>
+                        <h6 class="text-muted">稅務成本 (Tax costs)</h6>
+                        <h3 class="text-warning" id="totalTax">$0</h3>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md">
                 <div class="card summary-card" style="border-left: 4px solid #17a2b8;">
                     <div class="card-body text-center">
                         <h5 class="card-title">淨收益 (Net Profit)</h5>
-                        <h6 class="text-muted">損益 - 手續費 (P&L - Fees)</h6>
+                        <h6 class="text-muted">損益 - 手續費 - 稅金 (P&L - Fees - Tax)</h6>
                         <h3 id="netProfit">$0</h3>
                     </div>
                 </div>
