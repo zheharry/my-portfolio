@@ -2,6 +2,7 @@
 Statements/
 portfolio_analysis/
 data/
+archive/
 
 # Database files
 *.db
