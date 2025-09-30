@@ -7,10 +7,13 @@ class PortfolioDashboard {
         this.distributionChart = null;
         this.currentFilters = {};
         this.brokerKeys = {}; // Store mapping from display names to backend keys
+        this.filterTimeout = null; // For debouncing filter changes
         
         try {
             this.initializeEventListeners();
             console.log('Event listeners initialized');
+            this.initializeDateRangePicker();
+            console.log('Date range picker initialized');
             this.loadInitialData();
         } catch (error) {
             console.error('Error in constructor:', error);
@@ -31,9 +34,134 @@ class PortfolioDashboard {
         filterElements.forEach(id => {
             const element = document.getElementById(id);
             if (element) {
-                element.addEventListener('change', () => this.applyFilters());
+                element.addEventListener('change', () => {
+                    console.log(`🔧 Filter changed: ${id} = ${element.value}`);
+                    // Add a small delay to debounce rapid changes
+                    clearTimeout(this.filterTimeout);
+                    this.filterTimeout = setTimeout(() => {
+                        this.applyFilters();
+                    }, 300);
+                });
             }
         });
+        
+        // Initialize symbol search functionality
+        this.initializeSymbolSearch();
+    }
+
+    // Initialize date range picker
+    initializeDateRangePicker() {
+        console.log('🔧 Initializing date range picker...');
+        
+        const dateRangeElement = document.getElementById('dateRangePicker');
+        if (!dateRangeElement) {
+            console.error('❌ Date range picker element not found!');
+            return;
+        }
+        
+        console.log('✅ Date range picker element found:', dateRangeElement);
+        
+        // Check if Litepicker is available
+        if (typeof Litepicker === 'undefined') {
+            console.error('❌ Litepicker library not loaded!');
+            return;
+        }
+        
+        console.log('✅ Litepicker library available');
+        
+        try {
+            const picker = new Litepicker({
+                element: dateRangeElement,
+                singleMode: false,
+                allowRepick: true,
+                numberOfColumns: 2,
+                numberOfMonths: 2,
+                showTooltip: true,
+                showWeekNumbers: false,
+                maxDate: new Date(), // Disable future dates
+                autoApply: true, // Apply date selection immediately without needing to click Apply button
+                showApplyButton: false, // Hide the Apply button since we're auto-applying
+                dropdowns: {
+                    months: true,
+                    years: true
+                },
+                buttonText: {
+                    apply: 'Apply',
+                    cancel: 'Cancel'
+                },
+                format: 'YYYY-MM-DD',
+                delimiter: ' ~ ',
+                setup: (picker) => {
+                    console.log('🔧 Date picker setup callback triggered');
+                    
+                    // Add today button functionality
+                    document.getElementById('todayBtn').addEventListener('click', async () => {
+                        console.log('📅 Today button clicked');
+                        const today = new Date();
+                        picker.setDateRange(today, today);
+                        // The onSelect callback will handle the filtering
+                    });
+
+                    // Add clear button functionality
+                    document.getElementById('clearDateRange').addEventListener('click', async () => {
+                        console.log('🧹 Clear date button clicked');
+                        picker.clearSelection();
+                        // Clear hidden inputs
+                        document.getElementById('startDateFilter').value = '';
+                        document.getElementById('endDateFilter').value = '';
+                        // Apply filters to show all data
+                        this.applyFilters();
+                    });
+                },
+                onSelect: async (start, end) => {
+                    console.log('🗓️ Date range selected:', { start: start?.format('YYYY-MM-DD'), end: end?.format('YYYY-MM-DD') });
+                    
+                    // Show loading immediately to give user feedback
+                    this.showLoading(true);
+                    
+                    try {
+                        // Update hidden inputs immediately (synchronous operation)
+                        const startDate = start ? start.format('YYYY-MM-DD') : '';
+                        const endDate = end ? end.format('YYYY-MM-DD') : '';
+                        
+                        console.log('📝 Updating hidden inputs:', { startDate, endDate });
+                        
+                        document.getElementById('startDateFilter').value = startDate;
+                        document.getElementById('endDateFilter').value = endDate;
+                        
+                        // Use a shorter delay to make the filtering feel more responsive
+                        setTimeout(async () => {
+                            try {
+                                console.log('🔧 Applying filters after date selection...');
+                                await this.applyFilters();
+                                console.log('✅ Filters applied successfully');
+                            } catch (error) {
+                                console.error('❌ Error applying filters:', error);
+                                // Try a simpler approach if complex filtering fails
+                                this.applyDateOnlyFilterFallback(startDate, endDate);
+                            } finally {
+                                this.showLoading(false);
+                            }
+                        }, 100); // Small delay to ensure UI updates properly
+                        
+                    } catch (error) {
+                        console.error('❌ Error in date picker onSelect callback:', error);
+                        this.showLoading(false);
+                    }
+                },
+                onHide: () => {
+                    // Ensure loading indicator is hidden when picker is closed
+                    this.showLoading(false);
+                }
+            });
+
+            this.dateRangePicker = picker;
+            console.log('✅ Date range picker initialized successfully');
+            
+        } catch (error) {
+            console.error('❌ Error initializing date range picker:', error);
+            console.error('📍 Stack trace:', error.stack);
+        }
     }
 
     // Load initial data
@@ -49,17 +177,27 @@ class PortfolioDashboard {
             await this.loadFilterOptions();
             console.log('Filter options loaded');
             
+            // IMPORTANT: Wait a bit to ensure broker keys are properly set
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Verify broker keys are loaded before proceeding
+            if (!this.brokerKeys || Object.keys(this.brokerKeys).length === 0) {
+                console.warn('Broker keys still not loaded after filter options, proceeding with empty filters');
+            } else {
+                console.log('Broker keys confirmed loaded:', Object.keys(this.brokerKeys).length, 'brokers');
+            }
+            
             // Initialize multi-select controls after options are loaded
             this.initializeMultiSelectControls();
             console.log('Multi-select controls initialized');
             
-            console.log('Loading transactions (initial - no filters)...');
-            // For initial load, don't apply any filters yet - just load all transactions
-            this.currentFilters = {}; // Explicitly set to empty
+            console.log('Loading transactions (initial - with default filters)...');
+            // For initial load, use getFilterValues to get proper broker key conversion
+            this.currentFilters = this.getFilterValues();
             await this.loadTransactions();
             console.log('Transactions loaded');
             
-            console.log('Loading summary (initial - no filters)...');
+            console.log('Loading summary (initial - with default filters)...');
             await this.loadSummary();
             console.log('Summary loaded');
             
@@ -80,14 +218,15 @@ class PortfolioDashboard {
     // Load filter options
     async loadFilterOptions() {
         try {
+            // Load brokers FIRST and ensure broker keys are loaded before proceeding
+            const brokerData = await this.fetchAPI('/api/brokers');
+            this.brokerKeys = brokerData.broker_keys || {};
+            console.log('Broker keys loaded:', this.brokerKeys);
+            this.populateSelect('brokerFilter', brokerData.brokers || brokerData);
+
             // Load symbols
             const symbols = await this.fetchAPI('/api/symbols');
             this.populateSelect('symbolFilter', symbols);
-
-            // Load brokers - API returns object with brokers array and broker_keys mapping
-            const brokerData = await this.fetchAPI('/api/brokers');
-            this.brokerKeys = brokerData.broker_keys || {};
-            this.populateSelect('brokerFilter', brokerData.brokers || brokerData);
 
             // Populate years (2017-2025)
             const currentYear = new Date().getFullYear();
@@ -163,12 +302,70 @@ class PortfolioDashboard {
                     this.onBrokerFilterChange();
                 }
                 
-                this.applyFilters();
+                // Debounce the filter application
+                clearTimeout(this.filterTimeout);
+                this.filterTimeout = setTimeout(() => {
+                    this.applyFilters();
+                }, 300);
             });
         });
 
         // Initialize count display
         this.updateSelectionCount(containerId);
+        
+        // Initialize symbol search if this is the symbol filter
+        if (containerId === 'symbolFilter') {
+            this.initializeSymbolSearchAfterPopulate();
+        }
+    }
+
+    // Initialize symbol search functionality
+    initializeSymbolSearch() {
+        const searchInput = document.getElementById('symbolSearchInput');
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                this.filterSymbols(e.target.value);
+            });
+        }
+    }
+    
+    // Initialize symbol search after symbols are populated
+    initializeSymbolSearchAfterPopulate() {
+        // Store all symbols for filtering
+        const container = document.getElementById('symbolFilter');
+        if (container) {
+            this.allSymbols = Array.from(container.querySelectorAll('.checkbox-item')).map(item => {
+                const checkbox = item.querySelector('input[type="checkbox"]');
+                const label = item.querySelector('label');
+                return {
+                    element: item,
+                    value: checkbox.value,
+                    text: label.textContent,
+                    checked: checkbox.checked
+                };
+            });
+        }
+    }
+    
+    // Filter symbols based on search pattern
+    filterSymbols(searchPattern) {
+        if (!this.allSymbols) return;
+        
+        const container = document.getElementById('symbolFilter');
+        if (!container) return;
+        
+        const pattern = searchPattern.toLowerCase().trim();
+        
+        this.allSymbols.forEach(symbol => {
+            const matches = pattern === '' || 
+                          symbol.value.toLowerCase().includes(pattern) || 
+                          symbol.text.toLowerCase().includes(pattern);
+            
+            symbol.element.style.display = matches ? 'flex' : 'none';
+        });
+        
+        // Update the selection count to reflect only visible items
+        this.updateSelectionCount('symbolFilter');
     }
 
     // Initialize multi-select controls
@@ -196,7 +393,11 @@ class PortfolioDashboard {
         document.querySelectorAll('#transactionTypeFilter input[type="checkbox"]').forEach(checkbox => {
             checkbox.addEventListener('change', () => {
                 this.updateSelectionCount('transactionTypeFilter');
-                this.applyFilters();
+                // Debounce the filter application
+                clearTimeout(this.filterTimeout);
+                this.filterTimeout = setTimeout(() => {
+                    this.applyFilters();
+                }, 300);
             });
         });
     }
@@ -206,7 +407,12 @@ class PortfolioDashboard {
         const container = document.getElementById(containerId);
         if (!container) return;
 
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        // For symbol filter, only select visible items when search is active
+        const selector = containerId === 'symbolFilter' ? 
+            '.checkbox-item:not([style*="display: none"]) input[type="checkbox"]' : 
+            'input[type="checkbox"]';
+            
+        const checkboxes = container.querySelectorAll(selector);
         checkboxes.forEach(checkbox => {
             checkbox.checked = true;
         });
@@ -218,7 +424,11 @@ class PortfolioDashboard {
             this.onBrokerFilterChange();
         }
         
-        this.applyFilters();
+        // Debounce the filter application
+        clearTimeout(this.filterTimeout);
+        this.filterTimeout = setTimeout(() => {
+            this.applyFilters();
+        }, 300);
     }
 
     // Deselect all items in a multi-select container
@@ -226,7 +436,12 @@ class PortfolioDashboard {
         const container = document.getElementById(containerId);
         if (!container) return;
 
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        // For symbol filter, only deselect visible items when search is active
+        const selector = containerId === 'symbolFilter' ? 
+            '.checkbox-item:not([style*="display: none"]) input[type="checkbox"]' : 
+            'input[type="checkbox"]';
+            
+        const checkboxes = container.querySelectorAll(selector);
         checkboxes.forEach(checkbox => {
             checkbox.checked = false;
         });
@@ -238,7 +453,11 @@ class PortfolioDashboard {
             this.onBrokerFilterChange();
         }
         
-        this.applyFilters();
+        // Debounce the filter application
+        clearTimeout(this.filterTimeout);
+        this.filterTimeout = setTimeout(() => {
+            this.applyFilters();
+        }, 300);
     }
 
     // Update selection count display
@@ -248,26 +467,58 @@ class PortfolioDashboard {
         
         if (!container || !countElement) return;
 
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-        const checkedBoxes = container.querySelectorAll('input[type="checkbox"]:checked');
-        
-        countElement.textContent = `${checkedBoxes.length} / ${checkboxes.length}`;
+        // For symbol filter, only count visible items when search is active
+        if (containerId === 'symbolFilter') {
+            const visibleCheckboxes = container.querySelectorAll('.checkbox-item:not([style*="display: none"]) input[type="checkbox"]');
+            const visibleCheckedBoxes = container.querySelectorAll('.checkbox-item:not([style*="display: none"]) input[type="checkbox"]:checked');
+            countElement.textContent = `${visibleCheckedBoxes.length} / ${visibleCheckboxes.length}`;
+        } else {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checkedBoxes = container.querySelectorAll('input[type="checkbox"]:checked');
+            countElement.textContent = `${checkedBoxes.length} / ${checkboxes.length}`;
+        }
     }
 
     // Apply filters
     async applyFilters() {
-        this.showLoading(true);
-        this.currentFilters = this.getFilterValues();
+        console.log('🔧 applyFilters() called');
+        
+        // Only show loading if not already showing (to avoid duplicate loading indicators)
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const isAlreadyLoading = loadingIndicator && loadingIndicator.style.display === 'block';
+        
+        if (!isAlreadyLoading) {
+            this.showLoading(true);
+        }
         
         try {
+            // Ensure broker keys are loaded before applying filters
+            if (!this.brokerKeys || Object.keys(this.brokerKeys).length === 0) {
+                console.log('Broker keys not loaded yet, loading them first...');
+                try {
+                    const brokerData = await this.fetchAPI('/api/brokers');
+                    this.brokerKeys = brokerData.broker_keys || {};
+                    console.log('Broker keys loaded during applyFilters:', this.brokerKeys);
+                } catch (error) {
+                    console.error('Failed to load broker keys during applyFilters:', error);
+                    // Continue with empty broker keys - this allows date-only filtering
+                }
+            }
+            
+            this.currentFilters = this.getFilterValues();
+            console.log('🔍 Applying filters:', this.currentFilters);
+            
+            // Load data concurrently for better performance
             await Promise.all([
                 this.loadTransactions(),
                 this.loadSummary(),
                 this.updateCharts()
             ]);
+            console.log('✅ All filters applied successfully');
+            
         } catch (error) {
-            console.error('Error applying filters:', error);
-            this.showError('篩選資料時發生錯誤');
+            console.error('❌ Error applying filters:', error);
+            this.showError('篩選資料時發生錯誤: ' + error.message);
         } finally {
             this.showLoading(false);
         }
@@ -292,6 +543,11 @@ class PortfolioDashboard {
         multiSelectContainers.forEach(containerId => {
             this.selectAllItems(containerId);
         });
+
+        // Clear date range picker
+        if (this.dateRangePicker) {
+            this.dateRangePicker.clearSelection();
+        }
         
         this.currentFilters = {};
         this.applyFilters();
@@ -314,6 +570,18 @@ class PortfolioDashboard {
                 filters[filterKey] = element.value;
             }
         });
+        
+        // FALLBACK: Check the date range picker directly if hidden inputs are empty
+        if (!filters.start_date && !filters.end_date) {
+            const dateRangeElement = document.getElementById('dateRangePicker');
+            if (dateRangeElement && dateRangeElement.value) {
+                const dateRange = dateRangeElement.value.split(' ~ ');
+                if (dateRange.length === 2) {
+                    filters.start_date = dateRange[0];
+                    filters.end_date = dateRange[1];
+                }
+            }
+        }
 
         // Handle multi-select checkboxes
         const multiSelectMappings = {
@@ -330,32 +598,40 @@ class PortfolioDashboard {
                 
                 // For broker filter, convert display names to backend keys
                 if (containerId === 'brokerFilter') {
+                    console.log('🔍 Processing broker filter. Display names:', selectedValues);
+                    console.log('🔍 Available broker keys:', this.brokerKeys);
+                    console.log('🔍 Broker keys count:', Object.keys(this.brokerKeys || {}).length);
+                    
                     if (this.brokerKeys && Object.keys(this.brokerKeys).length > 0) {
-                        console.log('Converting broker display names to backend keys:', selectedValues);
+                        console.log('🔧 Converting broker display names to backend keys:', selectedValues);
                         selectedValues = selectedValues.map(displayName => {
                             const backendKey = this.brokerKeys[displayName] || displayName;
-                            console.log(`${displayName} -> ${backendKey}`);
+                            console.log(`🔄 ${displayName} -> ${backendKey}`);
                             return backendKey;
                         });
-                        console.log('Converted broker keys:', selectedValues);
+                        console.log('✅ Converted broker keys:', selectedValues);
                         
+                        // Only add broker filter if conversion was successful
                         if (selectedValues.length > 0) {
                             filters[filterKey] = selectedValues;
+                            console.log('✅ Added broker filter to request');
                         }
                     } else {
-                        // If broker keys not loaded yet, skip only the broker filter but continue with other filters
-                        console.warn('Broker keys not loaded yet, skipping broker filter but continuing with other filters');
-                        // Don't add broker filter, but continue processing other filters
+                        // If broker keys not loaded yet, skip broker filter entirely
+                        console.warn('⚠️ CRITICAL: Broker keys not loaded yet, skipping broker filter completely to avoid empty results');
+                        console.warn('⚠️ Available broker keys:', Object.keys(this.brokerKeys || {}));
+                        console.warn('⚠️ This allows date-only filtering to work properly');
+                        // Don't add broker filter at all - let other filters work without broker restriction
                     }
                 } else {
-                    // For non-broker filters, process normally
+                    // For non-broker filters, add normally if there are selected values
                     if (selectedValues.length > 0) {
                         filters[filterKey] = selectedValues;
                     }
                 }
             }
         });
-
+        
         return filters;
     }
 
@@ -422,12 +698,22 @@ class PortfolioDashboard {
         // Remove all current symbol checkboxes
         container.innerHTML = '';
         
+        // Clear search input
+        const searchInput = document.getElementById('symbolSearchInput');
+        if (searchInput) {
+            searchInput.value = '';
+        }
+        
+        // Reset stored symbols array
+        this.allSymbols = null;
+        
         // Update selection count
         this.updateSelectionCount('symbolFilter');
     }
 
     // Load transactions with current filters
     async loadTransactions() {
+        console.log('🚀 Loading transactions...');
         try {
             const params = new URLSearchParams();
             
@@ -441,11 +727,42 @@ class PortfolioDashboard {
                 }
             });
             
-            this.transactions = await this.fetchAPI(`/api/transactions?${params}`);
+            const apiUrl = `/api/transactions?${params}`;
+            console.log('🔗 Requesting transactions from:', apiUrl);
+
+            this.transactions = await this.fetchAPI(apiUrl);
+            
+            console.log('✅ Transactions loaded successfully!');
+            console.log(`📈 Transaction count: ${this.transactions.length}`);
+            
+            if (this.transactions.length > 0) {
+                const dateRange = {
+                    earliest: Math.min(...this.transactions.map(t => new Date(t.transaction_date).getTime())),
+                    latest: Math.max(...this.transactions.map(t => new Date(t.transaction_date).getTime()))
+                };
+                // Convert back to readable dates for logging
+                const readableDateRange = {
+                    earliest: new Date(dateRange.earliest).toISOString().split('T')[0],
+                    latest: new Date(dateRange.latest).toISOString().split('T')[0]
+                };
+                console.log('📅 Date range in results:', readableDateRange);
+                
+                // Show broker breakdown
+                const brokerBreakdown = {};
+                this.transactions.forEach(t => {
+                    brokerBreakdown[t.broker] = (brokerBreakdown[t.broker] || 0) + 1;
+                });
+                console.log('🏢 Broker breakdown:', brokerBreakdown);
+            } else {
+                console.warn('⚠️ WARNING: No transactions found with current filters!');
+                console.warn('⚠️ This might indicate a filtering issue.');
+                console.warn('⚠️ Check if broker keys are loaded properly.');
+            }
+            
             this.updateTransactionsTable();
         } catch (error) {
-            console.error('Error loading transactions:', error);
-            this.showError('載入交易資料時發生錯誤');
+            console.error('❌ Error loading transactions:', error);
+            this.showError('載入交易資料時發生錯誤: ' + error.message);
         }
     }
 
@@ -523,8 +840,6 @@ class PortfolioDashboard {
 
     // Update summary cards (all amounts converted to NTD)
     updateSummaryCards(summary) {
-        document.getElementById('totalInvestment').textContent = `NT$${this.formatNumber(summary.total_purchases || 0)}`;
-        
         const realizedPL = summary.realized_gain_loss || 0;
         const realizedPLElement = document.getElementById('realizedPL');
         realizedPLElement.innerHTML = this.formatNetAmount(realizedPL, 'NTD');
@@ -618,10 +933,7 @@ class PortfolioDashboard {
             }
         }
         
-        // Log detailed holdings information for debugging
-        if (data.holdings_details && data.holdings_details.length > 0) {
-            console.log('Current Holdings Details:', data.holdings_details);
-        }
+
     }
 
     // Update performance display
@@ -977,11 +1289,76 @@ class PortfolioDashboard {
         alertsContainer.innerHTML = alertsHTML;
         alertsContainer.style.display = alertsHTML ? 'block' : 'none';
     }
+
+
+
+
+
+
+
+    // Apply date-only filter (used when broker keys aren't loaded yet)
+    async applyDateOnlyFilter(startDate, endDate) {
+        if (!startDate || !endDate) return;
+        
+        console.log('Applying date-only filter:', startDate, 'to', endDate);
+        this.showLoading(true);
+        
+        try {
+            const filters = {
+                start_date: startDate,
+                end_date: endDate
+            };
+            
+            // Temporarily store these filters
+            this.currentFilters = filters;
+            
+            await Promise.all([
+                this.loadTransactions(),
+                this.loadSummary()
+            ]);
+            
+            console.log('Date-only filter applied successfully');
+        } catch (error) {
+            console.error('Error applying date-only filter:', error);
+            this.showError('Date filter failed: ' + error.message);
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    // Fallback method for date filtering when main filtering fails
+    async applyDateOnlyFilterFallback(startDate, endDate) {
+        console.log('🔄 Using fallback date-only filter approach...');
+        
+        if (!startDate || !endDate) {
+            console.log('No dates provided for fallback filter');
+            return;
+        }
+        
+        try {
+            // Create a simple filter with just the dates
+            const simpleFilters = {
+                start_date: startDate,
+                end_date: endDate
+            };
+            
+            this.currentFilters = simpleFilters;
+            
+            // Load transactions with just date filters
+            await this.loadTransactions();
+            await this.loadSummary();
+            
+            console.log('✅ Fallback date filter successful');
+            
+        } catch (error) {
+            console.error('❌ Fallback date filter also failed:', error);
+            this.showError('Unable to apply date filter: ' + error.message);
+        }
+    }
 }
 
 // Initialize dashboard when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM Content Loaded, initializing dashboard...');
     try {
         window.dashboard = new PortfolioDashboard();
     } catch (error) {
