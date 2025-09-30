@@ -16,7 +16,7 @@ class PortfolioAPI:
         self._forex_cache = {}
         self._stock_price_cache = {}
         self._cache_timestamp = None
-        self._cache_duration = 1800  # 30 minutes cache duration (increased from 5 minutes)
+        self._cache_duration = 86400  # 24 hours cache duration (was 30 minutes)
         self._request_count = 0  # Track API requests for rate limiting
         self._last_request_time = None
         self._yahoo_finance_available = True  # Circuit breaker for Yahoo Finance
@@ -355,8 +355,12 @@ class PortfolioAPI:
         import time
         return (time.time() - self._cache_timestamp) < self._cache_duration
     
-    def _throttle_requests(self):
+    def _throttle_requests(self, is_cached_request=False):
         """Implement request throttling to avoid rate limits"""
+        # Skip throttling for cached responses
+        if is_cached_request:
+            return
+            
         import time
         
         current_time = time.time()
@@ -421,10 +425,13 @@ class PortfolioAPI:
         if self._is_cache_valid() and cache_key in self._forex_cache:
             return self._forex_cache[cache_key]
         
-        # Clear cache if invalid
+        # Clear cache if invalid and set new timestamp
         if not self._is_cache_valid():
             self._forex_cache.clear()
             self._stock_price_cache.clear()
+            # Set new cache timestamp immediately to avoid multiple clears
+            import time
+            self._cache_timestamp = time.time()
         
         # Yahoo Finance forex symbols
         forex_mapping = {
@@ -443,8 +450,8 @@ class PortfolioAPI:
                 import time
                 import random
                 
-                # Apply request throttling
-                self._throttle_requests()
+                # Apply request throttling only for actual API calls (not cached)
+                self._throttle_requests(is_cached_request=False)
                 
                 ticker = yf.Ticker(forex_symbol)
                 
@@ -491,11 +498,6 @@ class PortfolioAPI:
         
         # Cache the result
         self._forex_cache[cache_key] = rate
-        
-        # Update cache timestamp
-        if self._cache_timestamp is None:
-            import time
-            self._cache_timestamp = time.time()
         
         return rate
 
@@ -1120,10 +1122,13 @@ class PortfolioAPI:
         errors = []
         symbols_to_fetch = []
         
-        # Clear cache if invalid
+        # Clear cache if invalid and set new timestamp
         if not self._is_cache_valid():
             self._stock_price_cache.clear()
             self._forex_cache.clear()
+            # Set new cache timestamp immediately to avoid multiple clears
+            import time
+            self._cache_timestamp = time.time()
         
         # Check cache first for each symbol
         for symbol_info in symbols_with_brokers:
@@ -1154,8 +1159,8 @@ class PortfolioAPI:
                 import time
                 import random
                 
-                # Apply request throttling
-                self._throttle_requests()
+                # Apply request throttling only for actual API calls (not cached)
+                self._throttle_requests(is_cached_request=False)
                 
                 # Get enhanced Yahoo symbol
                 yahoo_symbol = self._get_yahoo_symbol(symbol, broker)
@@ -1267,10 +1272,13 @@ class PortfolioAPI:
             else:
                 symbols_to_fetch.append(symbol)
         
-        # Clear cache if invalid
+        # Clear cache if invalid and set new timestamp
         if not self._is_cache_valid():
             self._stock_price_cache.clear()
             self._forex_cache.clear()
+            # Set new cache timestamp immediately to avoid multiple clears
+            import time
+            self._cache_timestamp = time.time()
         
         # Fetch only uncached symbols with rate limiting protection
         for i, symbol in enumerate(symbols_to_fetch):
@@ -1278,8 +1286,8 @@ class PortfolioAPI:
                 import time
                 import random
                 
-                # Apply request throttling
-                self._throttle_requests()
+                # Apply request throttling only for actual API calls (not cached)
+                self._throttle_requests(is_cached_request=False)
                 
                 # Handle different stock markets
                 yahoo_symbol = self._get_yahoo_symbol(symbol)
