@@ -44,6 +44,9 @@ class PortfolioDashboard {
                 });
             }
         });
+        
+        // Initialize symbol search functionality
+        this.initializeSymbolSearch();
     }
 
     // Initialize date range picker
@@ -309,6 +312,60 @@ class PortfolioDashboard {
 
         // Initialize count display
         this.updateSelectionCount(containerId);
+        
+        // Initialize symbol search if this is the symbol filter
+        if (containerId === 'symbolFilter') {
+            this.initializeSymbolSearchAfterPopulate();
+        }
+    }
+
+    // Initialize symbol search functionality
+    initializeSymbolSearch() {
+        const searchInput = document.getElementById('symbolSearchInput');
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                this.filterSymbols(e.target.value);
+            });
+        }
+    }
+    
+    // Initialize symbol search after symbols are populated
+    initializeSymbolSearchAfterPopulate() {
+        // Store all symbols for filtering
+        const container = document.getElementById('symbolFilter');
+        if (container) {
+            this.allSymbols = Array.from(container.querySelectorAll('.checkbox-item')).map(item => {
+                const checkbox = item.querySelector('input[type="checkbox"]');
+                const label = item.querySelector('label');
+                return {
+                    element: item,
+                    value: checkbox.value,
+                    text: label.textContent,
+                    checked: checkbox.checked
+                };
+            });
+        }
+    }
+    
+    // Filter symbols based on search pattern
+    filterSymbols(searchPattern) {
+        if (!this.allSymbols) return;
+        
+        const container = document.getElementById('symbolFilter');
+        if (!container) return;
+        
+        const pattern = searchPattern.toLowerCase().trim();
+        
+        this.allSymbols.forEach(symbol => {
+            const matches = pattern === '' || 
+                          symbol.value.toLowerCase().includes(pattern) || 
+                          symbol.text.toLowerCase().includes(pattern);
+            
+            symbol.element.style.display = matches ? 'flex' : 'none';
+        });
+        
+        // Update the selection count to reflect only visible items
+        this.updateSelectionCount('symbolFilter');
     }
 
     // Initialize multi-select controls
@@ -350,7 +407,12 @@ class PortfolioDashboard {
         const container = document.getElementById(containerId);
         if (!container) return;
 
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        // For symbol filter, only select visible items when search is active
+        const selector = containerId === 'symbolFilter' ? 
+            '.checkbox-item:not([style*="display: none"]) input[type="checkbox"]' : 
+            'input[type="checkbox"]';
+            
+        const checkboxes = container.querySelectorAll(selector);
         checkboxes.forEach(checkbox => {
             checkbox.checked = true;
         });
@@ -374,7 +436,12 @@ class PortfolioDashboard {
         const container = document.getElementById(containerId);
         if (!container) return;
 
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        // For symbol filter, only deselect visible items when search is active
+        const selector = containerId === 'symbolFilter' ? 
+            '.checkbox-item:not([style*="display: none"]) input[type="checkbox"]' : 
+            'input[type="checkbox"]';
+            
+        const checkboxes = container.querySelectorAll(selector);
         checkboxes.forEach(checkbox => {
             checkbox.checked = false;
         });
@@ -400,10 +467,16 @@ class PortfolioDashboard {
         
         if (!container || !countElement) return;
 
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-        const checkedBoxes = container.querySelectorAll('input[type="checkbox"]:checked');
-        
-        countElement.textContent = `${checkedBoxes.length} / ${checkboxes.length}`;
+        // For symbol filter, only count visible items when search is active
+        if (containerId === 'symbolFilter') {
+            const visibleCheckboxes = container.querySelectorAll('.checkbox-item:not([style*="display: none"]) input[type="checkbox"]');
+            const visibleCheckedBoxes = container.querySelectorAll('.checkbox-item:not([style*="display: none"]) input[type="checkbox"]:checked');
+            countElement.textContent = `${visibleCheckedBoxes.length} / ${visibleCheckboxes.length}`;
+        } else {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checkedBoxes = container.querySelectorAll('input[type="checkbox"]:checked');
+            countElement.textContent = `${checkedBoxes.length} / ${checkboxes.length}`;
+        }
     }
 
     // Apply filters
@@ -624,6 +697,15 @@ class PortfolioDashboard {
         
         // Remove all current symbol checkboxes
         container.innerHTML = '';
+        
+        // Clear search input
+        const searchInput = document.getElementById('symbolSearchInput');
+        if (searchInput) {
+            searchInput.value = '';
+        }
+        
+        // Reset stored symbols array
+        this.allSymbols = null;
         
         // Update selection count
         this.updateSelectionCount('symbolFilter');
