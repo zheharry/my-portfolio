@@ -338,15 +338,20 @@ class PortfolioDashboard {
                             return backendKey;
                         });
                         console.log('Converted broker keys:', selectedValues);
+                        
+                        if (selectedValues.length > 0) {
+                            filters[filterKey] = selectedValues;
+                        }
                     } else {
-                        // If broker keys not loaded yet, don't apply broker filter to avoid empty results
-                        console.warn('Broker keys not loaded yet, skipping broker filter to show all data');
-                        return filters; // Return early without adding broker filter
+                        // If broker keys not loaded yet, skip only the broker filter but continue with other filters
+                        console.warn('Broker keys not loaded yet, skipping broker filter but continuing with other filters');
+                        // Don't add broker filter, but continue processing other filters
                     }
-                }
-                
-                if (selectedValues.length > 0) {
-                    filters[filterKey] = selectedValues;
+                } else {
+                    // For non-broker filters, process normally
+                    if (selectedValues.length > 0) {
+                        filters[filterKey] = selectedValues;
+                    }
                 }
             }
         });
