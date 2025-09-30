@@ -7,6 +7,8 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Litepicker CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/litepicker/dist/css/litepicker.css">
     <style>
         .dashboard-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -174,6 +176,54 @@
             height: 2px;
             background: linear-gradient(90deg, transparent 0%, rgba(0,123,255,0.3) 50%, transparent 100%);
         }
+
+        /* Custom styling for date range picker */
+        #dateRangePicker {
+            cursor: pointer;
+            background-color: #fff;
+        }
+
+        #dateRangePicker:focus {
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+        }
+
+        .litepicker {
+            font-family: inherit;
+            border-radius: 0.375rem;
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        }
+
+        .litepicker .container__months {
+            box-shadow: none;
+        }
+
+        .litepicker .container__days .day-item.is-today {
+            background-color: #e3f2fd;
+            color: #1976d2;
+            font-weight: 600;
+        }
+
+        .litepicker .container__days .day-item.is-start-date,
+        .litepicker .container__days .day-item.is-end-date {
+            background-color: #667eea;
+            color: #fff;
+        }
+
+        .litepicker .container__days .day-item.is-in-range {
+            background-color: rgba(102, 126, 234, 0.2);
+            color: #495057;
+        }
+
+        .litepicker .container__footer .apply-btn {
+            background-color: #667eea;
+            border-color: #667eea;
+            color: #fff;
+        }
+
+        .litepicker .container__footer .apply-btn:hover {
+            background-color: #5a67d8;
+            border-color: #5a67d8;
+        }
     </style>
 </head>
 <body>
@@ -202,13 +252,20 @@
                         <option value="">所有年份 (All Years)</option>
                     </select>
                 </div>
-                <div class="col-md-3">
-                    <label class="form-label">開始日期 (Start Date)</label>
-                    <input type="date" id="startDateFilter" class="form-control">
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">結束日期 (End Date)</label>
-                    <input type="date" id="endDateFilter" class="form-control">
+                <div class="col-md-6">
+                    <label class="form-label">日期範圍 (Date Range)</label>
+                    <div class="input-group">
+                        <input type="text" id="dateRangePicker" class="form-control" placeholder="選擇日期範圍 / Select date range" readonly>
+                        <button class="btn btn-outline-secondary" type="button" id="clearDateRange">
+                            <i class="fas fa-times"></i>
+                        </button>
+                        <button class="btn btn-outline-secondary" type="button" id="todayBtn">
+                            <i class="fas fa-calendar-day"></i> Today
+                        </button>
+                    </div>
+                    <!-- Hidden inputs for backward compatibility -->
+                    <input type="hidden" id="startDateFilter">
+                    <input type="hidden" id="endDateFilter">
                 </div>
                 <div class="col-md-3">
                     <!-- Empty space to maintain alignment -->
@@ -299,7 +356,7 @@
                     <!-- Action Buttons Column -->
                     <div class="d-flex flex-column gap-2 mt-4">
                         <button id="applyFilters" class="btn btn-primary">
-                            <i class="fas fa-search"></i> 篩選 (Filter)
+                            <i class="fas fa-search"></i> 手動篩選 (Manual Filter)
                         </button>
                         <button id="clearFilters" class="btn btn-secondary">
                             <i class="fas fa-times"></i> 清除 (Clear)
@@ -515,6 +572,8 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="static/dashboard.js?v=2"></script>
+    <!-- Litepicker JS -->
+    <script src="https://cdn.jsdelivr.net/npm/litepicker/dist/litepicker.js"></script>
+    <script src="static/dashboard.js?v=14"></script>
 </body>
 </html>
