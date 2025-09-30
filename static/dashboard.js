@@ -35,7 +35,6 @@ class PortfolioDashboard {
             const element = document.getElementById(id);
             if (element) {
                 element.addEventListener('change', () => {
-                    console.log(`🔧 Filter changed: ${id} = ${element.value}`);
                     // Add a small delay to debounce rapid changes
                     clearTimeout(this.filterTimeout);
                     this.filterTimeout = setTimeout(() => {
@@ -51,23 +50,17 @@ class PortfolioDashboard {
 
     // Initialize date range picker
     initializeDateRangePicker() {
-        console.log('🔧 Initializing date range picker...');
-        
         const dateRangeElement = document.getElementById('dateRangePicker');
         if (!dateRangeElement) {
-            console.error('❌ Date range picker element not found!');
+            console.error('Date range picker element not found!');
             return;
         }
-        
-        console.log('✅ Date range picker element found:', dateRangeElement);
         
         // Check if Litepicker is available
         if (typeof Litepicker === 'undefined') {
-            console.error('❌ Litepicker library not loaded!');
+            console.error('Litepicker library not loaded!');
             return;
         }
-        
-        console.log('✅ Litepicker library available');
         
         try {
             const picker = new Litepicker({
@@ -92,19 +85,14 @@ class PortfolioDashboard {
                 format: 'YYYY-MM-DD',
                 delimiter: ' ~ ',
                 setup: (picker) => {
-                    console.log('🔧 Date picker setup callback triggered');
-                    
                     // Add today button functionality
                     document.getElementById('todayBtn').addEventListener('click', async () => {
-                        console.log('📅 Today button clicked');
                         const today = new Date();
                         picker.setDateRange(today, today);
-                        // The onSelect callback will handle the filtering
                     });
 
                     // Add clear button functionality
                     document.getElementById('clearDateRange').addEventListener('click', async () => {
-                        console.log('🧹 Clear date button clicked');
                         picker.clearSelection();
                         // Clear hidden inputs
                         document.getElementById('startDateFilter').value = '';
@@ -112,51 +100,60 @@ class PortfolioDashboard {
                         // Apply filters to show all data
                         this.applyFilters();
                     });
-                },
-                onSelect: async (start, end) => {
-                    console.log('🗓️ Date range selected:', { start: start?.format('YYYY-MM-DD'), end: end?.format('YYYY-MM-DD') });
+                }
+            });
+
+            // Store reference to dashboard instance for callbacks
+            const dashboardInstance = this;
+            
+            // Set up date selection event listener for auto-apply functionality
+            picker.on('selected', async (start, end) => {
+                // Only apply filters when BOTH dates are selected
+                if (!start || !end) {
+                    return;
+                }
+                
+                try {
+                    // Update hidden inputs
+                    const startDate = start.format('YYYY-MM-DD');
+                    const endDate = end.format('YYYY-MM-DD');
                     
-                    // Show loading immediately to give user feedback
-                    this.showLoading(true);
+                    document.getElementById('startDateFilter').value = startDate;
+                    document.getElementById('endDateFilter').value = endDate;
                     
-                    try {
-                        // Update hidden inputs immediately (synchronous operation)
-                        const startDate = start ? start.format('YYYY-MM-DD') : '';
-                        const endDate = end ? end.format('YYYY-MM-DD') : '';
+                    // Apply filters automatically
+                    await dashboardInstance.applyFilters();
+                    
+                } catch (error) {
+                    console.error('Error in date picker callback:', error);
+                    dashboardInstance.showError('篩選日期時發生錯誤: ' + error.message);
+                }
+            });
+            
+            // Backup event listener for additional compatibility
+            picker.on('hide', async () => {
+                const element = document.getElementById('dateRangePicker');
+                const value = element?.value;
+                
+                if (value && value.includes(' ~ ')) {
+                    const [start, end] = value.split(' ~ ');
+                    if (start && end) {
+                        // Update hidden inputs
+                        document.getElementById('startDateFilter').value = start;
+                        document.getElementById('endDateFilter').value = end;
                         
-                        console.log('📝 Updating hidden inputs:', { startDate, endDate });
-                        
-                        document.getElementById('startDateFilter').value = startDate;
-                        document.getElementById('endDateFilter').value = endDate;
-                        
-                        // Use a shorter delay to make the filtering feel more responsive
-                        setTimeout(async () => {
-                            try {
-                                console.log('🔧 Applying filters after date selection...');
-                                await this.applyFilters();
-                                console.log('✅ Filters applied successfully');
-                            } catch (error) {
-                                console.error('❌ Error applying filters:', error);
-                                // Try a simpler approach if complex filtering fails
-                                this.applyDateOnlyFilterFallback(startDate, endDate);
-                            } finally {
-                                this.showLoading(false);
-                            }
-                        }, 100); // Small delay to ensure UI updates properly
-                        
-                    } catch (error) {
-                        console.error('❌ Error in date picker onSelect callback:', error);
-                        this.showLoading(false);
+                        // Apply filters
+                        try {
+                            await dashboardInstance.applyFilters();
+                        } catch (error) {
+                            console.error('Error applying filters from hide event:', error);
+                        }
                     }
-                },
-                onHide: () => {
-                    // Ensure loading indicator is hidden when picker is closed
-                    this.showLoading(false);
                 }
             });
 
             this.dateRangePicker = picker;
-            console.log('✅ Date range picker initialized successfully');
+            console.log('Date range picker initialized successfully');
             
         } catch (error) {
             console.error('❌ Error initializing date range picker:', error);
@@ -481,8 +478,6 @@ class PortfolioDashboard {
 
     // Apply filters
     async applyFilters() {
-        console.log('🔧 applyFilters() called');
-        
         // Only show loading if not already showing (to avoid duplicate loading indicators)
         const loadingIndicator = document.getElementById('loadingIndicator');
         const isAlreadyLoading = loadingIndicator && loadingIndicator.style.display === 'block';
@@ -494,11 +489,9 @@ class PortfolioDashboard {
         try {
             // Ensure broker keys are loaded before applying filters
             if (!this.brokerKeys || Object.keys(this.brokerKeys).length === 0) {
-                console.log('Broker keys not loaded yet, loading them first...');
                 try {
                     const brokerData = await this.fetchAPI('/api/brokers');
                     this.brokerKeys = brokerData.broker_keys || {};
-                    console.log('Broker keys loaded during applyFilters:', this.brokerKeys);
                 } catch (error) {
                     console.error('Failed to load broker keys during applyFilters:', error);
                     // Continue with empty broker keys - this allows date-only filtering
@@ -506,7 +499,6 @@ class PortfolioDashboard {
             }
             
             this.currentFilters = this.getFilterValues();
-            console.log('🔍 Applying filters:', this.currentFilters);
             
             // Load data concurrently for better performance
             await Promise.all([
@@ -514,10 +506,9 @@ class PortfolioDashboard {
                 this.loadSummary(),
                 this.updateCharts()
             ]);
-            console.log('✅ All filters applied successfully');
             
         } catch (error) {
-            console.error('❌ Error applying filters:', error);
+            console.error('Error applying filters:', error);
             this.showError('篩選資料時發生錯誤: ' + error.message);
         } finally {
             this.showLoading(false);
@@ -598,31 +589,17 @@ class PortfolioDashboard {
                 
                 // For broker filter, convert display names to backend keys
                 if (containerId === 'brokerFilter') {
-                    console.log('🔍 Processing broker filter. Display names:', selectedValues);
-                    console.log('🔍 Available broker keys:', this.brokerKeys);
-                    console.log('🔍 Broker keys count:', Object.keys(this.brokerKeys || {}).length);
-                    
                     if (this.brokerKeys && Object.keys(this.brokerKeys).length > 0) {
-                        console.log('🔧 Converting broker display names to backend keys:', selectedValues);
                         selectedValues = selectedValues.map(displayName => {
-                            const backendKey = this.brokerKeys[displayName] || displayName;
-                            console.log(`🔄 ${displayName} -> ${backendKey}`);
-                            return backendKey;
+                            return this.brokerKeys[displayName] || displayName;
                         });
-                        console.log('✅ Converted broker keys:', selectedValues);
                         
                         // Only add broker filter if conversion was successful
                         if (selectedValues.length > 0) {
                             filters[filterKey] = selectedValues;
-                            console.log('✅ Added broker filter to request');
                         }
-                    } else {
-                        // If broker keys not loaded yet, skip broker filter entirely
-                        console.warn('⚠️ CRITICAL: Broker keys not loaded yet, skipping broker filter completely to avoid empty results');
-                        console.warn('⚠️ Available broker keys:', Object.keys(this.brokerKeys || {}));
-                        console.warn('⚠️ This allows date-only filtering to work properly');
-                        // Don't add broker filter at all - let other filters work without broker restriction
                     }
+                    // If broker keys not loaded yet, don't add broker filter to allow date-only filtering
                 } else {
                     // For non-broker filters, add normally if there are selected values
                     if (selectedValues.length > 0) {
@@ -713,7 +690,6 @@ class PortfolioDashboard {
 
     // Load transactions with current filters
     async loadTransactions() {
-        console.log('🚀 Loading transactions...');
         try {
             const params = new URLSearchParams();
             
@@ -728,40 +704,11 @@ class PortfolioDashboard {
             });
             
             const apiUrl = `/api/transactions?${params}`;
-            console.log('🔗 Requesting transactions from:', apiUrl);
-
             this.transactions = await this.fetchAPI(apiUrl);
-            
-            console.log('✅ Transactions loaded successfully!');
-            console.log(`📈 Transaction count: ${this.transactions.length}`);
-            
-            if (this.transactions.length > 0) {
-                const dateRange = {
-                    earliest: Math.min(...this.transactions.map(t => new Date(t.transaction_date).getTime())),
-                    latest: Math.max(...this.transactions.map(t => new Date(t.transaction_date).getTime()))
-                };
-                // Convert back to readable dates for logging
-                const readableDateRange = {
-                    earliest: new Date(dateRange.earliest).toISOString().split('T')[0],
-                    latest: new Date(dateRange.latest).toISOString().split('T')[0]
-                };
-                console.log('📅 Date range in results:', readableDateRange);
-                
-                // Show broker breakdown
-                const brokerBreakdown = {};
-                this.transactions.forEach(t => {
-                    brokerBreakdown[t.broker] = (brokerBreakdown[t.broker] || 0) + 1;
-                });
-                console.log('🏢 Broker breakdown:', brokerBreakdown);
-            } else {
-                console.warn('⚠️ WARNING: No transactions found with current filters!');
-                console.warn('⚠️ This might indicate a filtering issue.');
-                console.warn('⚠️ Check if broker keys are loaded properly.');
-            }
             
             this.updateTransactionsTable();
         } catch (error) {
-            console.error('❌ Error loading transactions:', error);
+            console.error('Error loading transactions:', error);
             this.showError('載入交易資料時發生錯誤: ' + error.message);
         }
     }
@@ -1328,10 +1275,7 @@ class PortfolioDashboard {
 
     // Fallback method for date filtering when main filtering fails
     async applyDateOnlyFilterFallback(startDate, endDate) {
-        console.log('🔄 Using fallback date-only filter approach...');
-        
         if (!startDate || !endDate) {
-            console.log('No dates provided for fallback filter');
             return;
         }
         
@@ -1347,8 +1291,6 @@ class PortfolioDashboard {
             // Load transactions with just date filters
             await this.loadTransactions();
             await this.loadSummary();
-            
-            console.log('✅ Fallback date filter successful');
             
         } catch (error) {
             console.error('❌ Fallback date filter also failed:', error);
