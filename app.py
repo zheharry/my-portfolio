@@ -316,22 +316,23 @@ class PortfolioAPI:
         if broker_filters:
             if isinstance(broker_filters, list):
                 if len(broker_filters) > 0:
-                    # Map full names to short names for all brokers
-                    short_names = []
-                    full_names = []
-                    for broker in broker_filters:
-                        short_name = broker_mapping.get(broker, broker)
-                        short_names.append(short_name)
-                        full_names.append(broker)
-                    
-                    # Filter symbols by broker (similar to get_transactions logic)
-                    query += f" AND (t.broker IN ({','.join(['?' for _ in short_names])}) OR a.broker IN ({','.join(['?' for _ in short_names])}) OR a.institution IN ({','.join(['?' for _ in full_names])}))"
-                    params.extend(short_names + short_names + full_names)
+                    # Use the same filtering logic as get_transactions to handle composite keys
+                    broker_conditions, broker_params = self._parse_broker_filter(broker_filters, use_account_join=True)
+                    if broker_conditions:
+                        query += f" AND ({' OR '.join(broker_conditions)})"
+                        params.extend(broker_params)
             else:
                 # Single broker (backward compatibility)
-                short_name = broker_mapping.get(broker_filters, broker_filters)
-                query += " AND (t.broker = ? OR a.broker = ? OR a.institution = ?)"
-                params.extend([short_name, short_name, broker_filters])
+                if '|' in broker_filters:
+                    # Composite key: specific account
+                    broker_short, account_id = broker_filters.split('|', 1)
+                    query += " AND (t.broker = ? AND t.account_id = ?)"
+                    params.extend([broker_short, account_id])
+                else:
+                    # Regular broker - check both original name and mapped name
+                    short_name = broker_mapping.get(broker_filters, broker_filters)
+                    query += " AND (t.broker = ? OR t.broker = ? OR a.broker = ? OR a.institution = ?)"
+                    params.extend([broker_filters, short_name, short_name, broker_filters])
         
         query += " ORDER BY t.symbol"
         

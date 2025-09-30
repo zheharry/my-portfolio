@@ -758,8 +758,6 @@ class PortfolioDashboard {
 
     // Update summary cards (all amounts converted to NTD)
     updateSummaryCards(summary) {
-        document.getElementById('totalInvestment').textContent = `NT$${this.formatNumber(summary.total_purchases || 0)}`;
-        
         const realizedPL = summary.realized_gain_loss || 0;
         const realizedPLElement = document.getElementById('realizedPL');
         realizedPLElement.innerHTML = this.formatNetAmount(realizedPL, 'NTD');
