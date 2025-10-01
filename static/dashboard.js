@@ -1131,40 +1131,191 @@ class PortfolioDashboard {
         }
     }
 
-    // Export data to CSV
+    // Export data to CSV in "My Stocks" app format
     exportData() {
         if (this.transactions.length === 0) {
             alert('沒有資料可匯出');
             return;
         }
 
+        // Headers for My Stocks app format
         const headers = [
-            'Date', 'Symbol', 'Type', 'Quantity', 'Price', 'Amount', 
-            'Fee', 'Tax', 'Net Amount', 'Broker', 'Order ID'
+            'Id', 'Symbol', 'Name', 'Display Symbol', 'Exchange', 'Portfolio', 'Currency',
+            'Shares Owned', 'Cost Per Share', 'Commission', 'Transaction Date', 'Transaction Time',
+            'Purchase Exchange Rate', 'Type', 'Accounting', 'Accounting Execution Ids', 'Notes'
         ];
 
-        const csvContent = [
-            headers.join(','),
-            ...this.transactions.map(t => [
-                t.transaction_date,
-                t.symbol || '',
-                t.transaction_type,
-                t.quantity || '',
-                t.price || '',
-                t.amount || '',
-                t.fee || '',
-                t.tax || '',
-                t.net_amount || '',
-                t.broker || '',
-                t.order_id || ''
-            ].join(','))
-        ].join('\n');
+        // Helper function to escape CSV values
+        const escapeCSV = (value) => {
+            if (value === null || value === undefined || value === '') {
+                return '';
+            }
+            const str = String(value);
+            // Always quote values to match the expected format
+            return `"${str.replace(/"/g, '""')}"`;
+        };
+
+        // Helper function to get exchange from symbol
+        const getExchange = (symbol, broker) => {
+            if (!symbol) return '';
+            
+            // Taiwan stocks
+            if (symbol.endsWith('.TW') || symbol.endsWith('.TWO')) {
+                return 'TAI';
+            }
+            
+            // Cash doesn't have exchange
+            if (symbol.includes('=CASH')) return '';
+            
+            // Known NYSE stocks
+            const nyseStocks = ['DELL', 'BAC', 'JPM', 'WFC', 'GE'];
+            if (nyseStocks.includes(symbol)) {
+                return 'NYQ';
+            }
+            
+            // US stocks - determine by broker or common exchanges
+            if (broker && broker.includes('TDA')) {
+                return 'PCX'; // Pacific Exchange
+            }
+            
+            // Default to Nasdaq for US stocks
+            return 'NMS';
+        };
+
+        // Helper function to get symbol name (extract from symbol or use as-is)
+        const getSymbolName = (symbol) => {
+            if (!symbol) return '';
+            
+            // For Taiwan stocks, remove the .TW suffix for display
+            if (symbol.endsWith('.TW')) {
+                return 'Taiwan Semiconductor Manufactur'; // Simplified name
+            }
+            
+            // For US stocks, use common names or symbol
+            const nameMap = {
+                'INTC': 'Intel Corporation',
+                'DELL': 'Dell Technologies Inc.',
+                'VOO': 'Vanguard S&P 500 ETF',
+                'USD=CASH': 'USD'
+            };
+            
+            return nameMap[symbol] || symbol;
+        };
+
+        // Helper function to map transaction type
+        const mapTransactionType = (type) => {
+            const typeMap = {
+                'BUY': 'Buy',
+                'SELL': 'Sell',
+                'DIVIDEND': 'Dividend',
+                'DIVIDEND_REINVEST': 'Dividend Reinvest',
+                'SPLIT': 'Split',
+                'INTEREST': 'Interest',
+                'TRANSFER': 'Transfer',
+                'DEPOSIT': 'Buy',  // Map deposit to Buy for cash
+                'WITHDRAWAL': 'Sell'  // Map withdrawal to Sell for cash
+            };
+            return typeMap[type] || type;
+        };
+
+        // Helper function to format date as "YYYY-MM-DD GMT+0800"
+        const formatDate = (dateStr) => {
+            if (!dateStr) return '';
+            // Input format is YYYY-MM-DD, we need to add GMT+0800
+            return `${dateStr} GMT+0800`;
+        };
+
+        // Helper function to get time (default to 09:00:00)
+        const getTime = () => {
+            return '09:00:00';
+        };
+
+        // Helper function to determine if accounting should be FIFO
+        const getAccounting = (type) => {
+            const fifoTypes = ['SELL', 'DIVIDEND', 'INTEREST'];
+            return fifoTypes.includes(type) ? 'FIFO' : '';
+        };
+
+        // Group transactions by symbol+portfolio for proper ordering
+        const symbolGroups = {};
+        this.transactions.forEach(t => {
+            const key = `${t.symbol || 'CASH'}_${t.broker || 'UNKNOWN'}`;
+            if (!symbolGroups[key]) {
+                symbolGroups[key] = [];
+            }
+            symbolGroups[key].push(t);
+        });
+
+        // Build CSV rows
+        const rows = [];
+        let rowId = 1;
+
+        // Process each symbol group
+        Object.keys(symbolGroups).sort().forEach(key => {
+            const transactions = symbolGroups[key];
+            const firstTx = transactions[0];
+            const symbol = firstTx.symbol || 'USD=CASH';
+            const portfolio = firstTx.broker || '';
+            const currency = firstTx.currency || 'USD';
+            const exchange = getExchange(symbol, portfolio);
+            const name = getSymbolName(symbol);
+
+            // Add initial row for this symbol (empty transaction)
+            rows.push([
+                escapeCSV(rowId++),
+                escapeCSV(symbol),
+                escapeCSV(name),
+                escapeCSV(''), // Display Symbol
+                escapeCSV(exchange),
+                escapeCSV(portfolio),
+                escapeCSV(currency),
+                escapeCSV(''), // Shares Owned (empty for initial row)
+                escapeCSV(''), // Cost Per Share
+                escapeCSV(''), // Commission
+                escapeCSV(''), // Transaction Date
+                escapeCSV(''), // Transaction Time
+                escapeCSV(''), // Purchase Exchange Rate
+                escapeCSV(''), // Type
+                escapeCSV(''), // Accounting
+                escapeCSV(''), // Accounting Execution Ids
+                escapeCSV('')  // Notes
+            ].join(','));
+
+            // Add transaction rows for this symbol
+            transactions.forEach(t => {
+                rows.push([
+                    escapeCSV(rowId++),
+                    escapeCSV(symbol),
+                    escapeCSV(name),
+                    escapeCSV(''), // Display Symbol
+                    escapeCSV(exchange),
+                    escapeCSV(portfolio),
+                    escapeCSV(currency),
+                    escapeCSV(t.quantity || ''), // Shares Owned
+                    escapeCSV(t.price || ''), // Cost Per Share
+                    escapeCSV(t.fee || '0'), // Commission
+                    escapeCSV(formatDate(t.transaction_date)), // Transaction Date
+                    escapeCSV(getTime()), // Transaction Time
+                    escapeCSV('0'), // Purchase Exchange Rate
+                    escapeCSV(mapTransactionType(t.transaction_type)), // Type
+                    escapeCSV(getAccounting(t.transaction_type)), // Accounting
+                    escapeCSV(''), // Accounting Execution Ids
+                    escapeCSV('')  // Notes
+                ].join(','));
+            });
+
+            // Add blank line between symbol groups
+            rows.push('');
+        });
+
+        // Combine headers and rows
+        const csvContent = [headers.join(','), ...rows].join('\n');
 
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
         link.setAttribute('href', url);
-        link.setAttribute('download', `portfolio_transactions_${new Date().toISOString().split('T')[0]}.csv`);
+        link.setAttribute('download', `my_stocks_export_${new Date().toISOString().split('T')[0]}.csv`);
         link.style.visibility = 'hidden';
         document.body.appendChild(link);
         link.click();
