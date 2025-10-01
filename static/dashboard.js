@@ -831,9 +831,12 @@ class PortfolioDashboard {
                 `${this.formatNumber(transaction.quantity)} ${transaction.symbol ? '股' : ''}` : 
                 '-';
 
+            // Display Chinese name if available, otherwise show symbol
+            const displaySymbol = transaction.chinese_name || transaction.symbol || '-';
+            
             row.innerHTML = `
                 <td>${this.formatDate(transaction.transaction_date)}</td>
-                <td><strong>${transaction.symbol || '-'}</strong></td>
+                <td><strong>${displaySymbol}</strong></td>
                 <td><span class="badge ${transaction.transaction_type === '買進' ? 'bg-success' : 'bg-success'}">${transaction.transaction_type}</span></td>
                 <td><strong>${quantityDisplay}</strong></td>
                 <td>$${this.formatNumber(transaction.price)}</td>
@@ -1159,7 +1162,7 @@ class PortfolioDashboard {
         const getExchange = (symbol, broker) => {
             if (!symbol) return '';
             
-            // Taiwan stocks
+            // Taiwan stocks (symbol should already be in ticker format like 2330.TW)
             if (symbol.endsWith('.TW') || symbol.endsWith('.TWO')) {
                 return 'TAI';
             }
@@ -1182,13 +1185,25 @@ class PortfolioDashboard {
             return 'NMS';
         };
 
-        // Helper function to get symbol name (extract from symbol or use as-is)
-        const getSymbolName = (symbol) => {
+        // Helper function to get symbol name for export (English company names)
+        const getSymbolName = (symbol, chineseName) => {
             if (!symbol) return '';
             
-            // For Taiwan stocks, remove the .TW suffix for display
+            // For Taiwan stocks with ticker codes, get proper English names
+            const tickerNameMap = {
+                '2330.TW': 'Taiwan Semiconductor Manufacturing Company',
+                '006208.TW': 'Fubon FTSE Taiwan 50 ETF',
+                '2454.TW': 'MediaTek Inc.',
+                '2002.TW': 'China Steel Corporation'
+            };
+            
+            if (tickerNameMap[symbol]) {
+                return tickerNameMap[symbol];
+            }
+            
+            // For Taiwan stocks, remove the .TW suffix for display if no specific mapping
             if (symbol.endsWith('.TW')) {
-                return 'Taiwan Semiconductor Manufactur'; // Simplified name
+                return symbol.replace('.TW', '');
             }
             
             // For US stocks, use common names or symbol
@@ -1254,11 +1269,12 @@ class PortfolioDashboard {
         Object.keys(symbolGroups).sort().forEach(key => {
             const transactions = symbolGroups[key];
             const firstTx = transactions[0];
-            const symbol = firstTx.symbol || 'USD=CASH';
+            const symbol = firstTx.symbol || 'USD=CASH'; // Symbol is already in ticker format from database
+            const chineseName = firstTx.chinese_name; // Chinese name for reference
             const portfolio = firstTx.broker || '';
             const currency = firstTx.currency || 'USD';
             const exchange = getExchange(symbol, portfolio);
-            const name = getSymbolName(symbol);
+            const name = getSymbolName(symbol, chineseName);
 
             // Add initial row for this symbol (empty transaction)
             rows.push([
@@ -1283,6 +1299,11 @@ class PortfolioDashboard {
 
             // Add transaction rows for this symbol
             transactions.forEach(t => {
+                // Calculate total commission by combining fee and tax
+                const fee = parseFloat(t.fee || 0);
+                const tax = parseFloat(t.tax || 0);
+                const totalCommission = fee + tax;
+                
                 rows.push([
                     escapeCSV(rowId++),
                     escapeCSV(symbol),
@@ -1293,7 +1314,7 @@ class PortfolioDashboard {
                     escapeCSV(currency),
                     escapeCSV(t.quantity || ''), // Shares Owned
                     escapeCSV(t.price || ''), // Cost Per Share
-                    escapeCSV(t.fee || '0'), // Commission
+                    escapeCSV(totalCommission.toString()), // Commission (fee + tax)
                     escapeCSV(formatDate(t.transaction_date)), // Transaction Date
                     escapeCSV(getTime()), // Transaction Time
                     escapeCSV('0'), // Purchase Exchange Rate

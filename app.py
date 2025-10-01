@@ -50,6 +50,7 @@ class PortfolioAPI:
                     account_id TEXT,
                     transaction_date TEXT,
                     symbol TEXT,
+                    chinese_name TEXT,
                     transaction_type TEXT,
                     quantity INTEGER,
                     price REAL,
@@ -71,6 +72,7 @@ class PortfolioAPI:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     account_id TEXT,
                     symbol TEXT,
+                    chinese_name TEXT,
                     quantity INTEGER,
                     average_cost REAL,
                     market_value REAL,
@@ -89,7 +91,7 @@ class PortfolioAPI:
             self._migrate_currency_columns(cursor)
     
     def _migrate_currency_columns(self, cursor):
-        """Add currency columns to existing tables and populate based on broker"""
+        """Add currency and chinese_name columns to existing tables and populate based on broker"""
         try:
             # Check and add currency column to accounts table
             cursor.execute("PRAGMA table_info(accounts)")
@@ -106,6 +108,11 @@ class PortfolioAPI:
             if 'currency' not in transactions_columns:
                 cursor.execute("ALTER TABLE transactions ADD COLUMN currency TEXT DEFAULT 'USD'")
                 print("Added currency column to transactions table")
+                
+            # Check and add chinese_name column to transactions table
+            if 'chinese_name' not in transactions_columns:
+                cursor.execute("ALTER TABLE transactions ADD COLUMN chinese_name TEXT")
+                print("Added chinese_name column to transactions table")
             
             # Check and add currency column to positions table
             cursor.execute("PRAGMA table_info(positions)")
@@ -114,13 +121,18 @@ class PortfolioAPI:
             if 'currency' not in positions_columns:
                 cursor.execute("ALTER TABLE positions ADD COLUMN currency TEXT DEFAULT 'USD'")
                 print("Added currency column to positions table")
+                
+            # Check and add chinese_name column to positions table
+            if 'chinese_name' not in positions_columns:
+                cursor.execute("ALTER TABLE positions ADD COLUMN chinese_name TEXT")
+                print("Added chinese_name column to positions table")
             
             # Update existing records with appropriate currency based on broker
-            # CATHAY/國泰證券 → NTD, SCHWAB/TDA → USD
+            # CATHAY/國泰證券 → TWD, SCHWAB/TDA → USD
             cursor.execute("""
                 UPDATE accounts 
                 SET currency = CASE 
-                    WHEN broker LIKE '%CATHAY%' OR broker LIKE '%國泰證券%' THEN 'NTD'
+                    WHEN broker LIKE '%CATHAY%' OR broker LIKE '%國泰證券%' THEN 'TWD'
                     WHEN broker LIKE '%SCHWAB%' OR broker LIKE '%TDA%' THEN 'USD'
                     ELSE 'USD'
                 END
@@ -130,7 +142,7 @@ class PortfolioAPI:
             cursor.execute("""
                 UPDATE transactions 
                 SET currency = CASE 
-                    WHEN broker LIKE '%CATHAY%' OR broker LIKE '%國泰證券%' THEN 'NTD'
+                    WHEN broker LIKE '%CATHAY%' OR broker LIKE '%國泰證券%' THEN 'TWD'
                     WHEN broker LIKE '%SCHWAB%' OR broker LIKE '%TDA%' THEN 'USD'
                     ELSE 'USD'
                 END
@@ -140,7 +152,7 @@ class PortfolioAPI:
             cursor.execute("""
                 UPDATE positions 
                 SET currency = CASE 
-                    WHEN broker LIKE '%CATHAY%' OR broker LIKE '%國泰證券%' THEN 'NTD'
+                    WHEN broker LIKE '%CATHAY%' OR broker LIKE '%國泰證券%' THEN 'TWD'
                     WHEN broker LIKE '%SCHWAB%' OR broker LIKE '%TDA%' THEN 'USD'
                     ELSE 'USD'
                 END
@@ -437,9 +449,7 @@ class PortfolioAPI:
         # Yahoo Finance forex symbols
         forex_mapping = {
             ('USD', 'TWD'): 'USDTWD=X',
-            ('TWD', 'USD'): 'TWDUSD=X',
-            ('USD', 'NTD'): 'USDTWD=X',  # NTD and TWD are the same
-            ('NTD', 'USD'): 'TWDUSD=X'
+            ('TWD', 'USD'): 'TWDUSD=X'
         }
         
         forex_symbol = forex_mapping.get((from_currency, to_currency))
@@ -490,9 +500,7 @@ class PortfolioAPI:
         if rate is None:
             fallback_rates = {
                 ('USD', 'TWD'): 31.5,
-                ('USD', 'NTD'): 31.5,
-                ('TWD', 'USD'): 1/31.5,
-                ('NTD', 'USD'): 1/31.5
+                ('TWD', 'USD'): 1/31.5
             }
             rate = fallback_rates.get((from_currency, to_currency), 1.0)
             print(f"Using fallback rate for {from_currency}/{to_currency}: {rate}")
@@ -502,16 +510,16 @@ class PortfolioAPI:
         
         return rate
 
-    def convert_to_ntd(self, amount, from_currency):
-        """Convert amount to NTD using real-time or fallback exchange rate"""
+    def convert_to_twd(self, amount, from_currency):
+        """Convert amount to TWD using real-time or fallback exchange rate"""
         if amount is None:
             return 0
         
-        if from_currency == 'NTD':
+        if from_currency == 'TWD':
             return amount
         
         # Get real-time exchange rate
-        rate = self.get_forex_rate(from_currency, 'NTD')
+        rate = self.get_forex_rate(from_currency, 'TWD')
         return amount * rate
     
     def _apply_broker_filter(self, query, params, filters, use_account_join=False):
@@ -687,7 +695,7 @@ class PortfolioAPI:
                    for row in cursor.fetchall()]
     
     def get_portfolio_summary(self, filters=None):
-        """Get enhanced portfolio summary with fees and multi-select support, converted to NTD"""
+        """Get enhanced portfolio summary with fees and multi-select support, converted to TWD"""
         # Broker mapping for filtering
         broker_mapping = {
             '國泰證券': 'CATHAY',
@@ -783,78 +791,78 @@ class PortfolioAPI:
                 query += " AND t.transaction_date <= ?"
                 params.append(filters['end_date'])
         
-        # Execute query and convert amounts to NTD
+        # Execute query and convert amounts to TWD
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
             
-            # Initialize totals in NTD
-            total_sales_ntd = 0
-            total_purchases_ntd = 0
-            total_dividends_ntd = 0
-            total_fees_ntd = 0
-            total_taxes_ntd = 0
-            total_deposits_ntd = 0
-            total_withdrawals_ntd = 0
+            # Initialize totals in TWD
+            total_sales_twd = 0
+            total_purchases_twd = 0
+            total_dividends_twd = 0
+            total_fees_twd = 0
+            total_taxes_twd = 0
+            total_deposits_twd = 0
+            total_withdrawals_twd = 0
             total_transactions = 0
             
-            # Process each transaction and convert to NTD
+            # Process each transaction and convert to TWD
             for row in cursor.fetchall():
                 net_amount, fee, tax, transaction_type, symbol, currency = row
                 
-                # Convert amounts to NTD
-                net_amount_ntd = self.convert_to_ntd(net_amount or 0, currency or 'NTD')
-                fee_ntd = self.convert_to_ntd(fee or 0, currency or 'NTD')
-                tax_ntd = self.convert_to_ntd(tax or 0, currency or 'NTD')
+                # Convert amounts to TWD
+                net_amount_twd = self.convert_to_twd(net_amount or 0, currency or 'TWD')
+                fee_twd = self.convert_to_twd(fee or 0, currency or 'TWD')
+                tax_twd = self.convert_to_twd(tax or 0, currency or 'TWD')
                 
                 total_transactions += 1
-                total_fees_ntd += fee_ntd
-                total_taxes_ntd += tax_ntd
+                total_fees_twd += fee_twd
+                total_taxes_twd += tax_twd
                 
                 # Categorize by transaction type
                 if transaction_type == 'SELL':
-                    total_sales_ntd += net_amount_ntd
+                    total_sales_twd += net_amount_twd
                 elif transaction_type == 'BUY':
-                    total_purchases_ntd += abs(net_amount_ntd)
+                    total_purchases_twd += abs(net_amount_twd)
                 elif transaction_type == 'DIVIDEND':
-                    total_dividends_ntd += net_amount_ntd
-                elif net_amount_ntd > 0 and symbol is None:  # Deposit
-                    total_deposits_ntd += net_amount_ntd
-                elif net_amount_ntd < 0 and symbol is None:  # Withdrawal
-                    total_withdrawals_ntd += abs(net_amount_ntd)
+                    total_dividends_twd += net_amount_twd
+                elif net_amount_twd > 0 and symbol is None:  # Deposit
+                    total_deposits_twd += net_amount_twd
+                elif net_amount_twd < 0 and symbol is None:  # Withdrawal
+                    total_withdrawals_twd += abs(net_amount_twd)
             
             # Calculate CORRECTED realized P&L (only from sold quantities) 
-            realized_gain_loss_ntd = self._calculate_true_realized_pnl(filters)
-            net_after_fees_ntd = realized_gain_loss_ntd - total_fees_ntd - total_taxes_ntd
+            realized_gain_loss_twd = self._calculate_true_realized_pnl(filters)
+            net_after_fees_twd = realized_gain_loss_twd - total_fees_twd - total_taxes_twd
             
             # Get detailed breakdown of realized P&L by symbol
             realized_pnl_breakdown = self._get_realized_pnl_breakdown(filters)
             
             # Calculate alternative P&L views
-            current_holdings_realized_pnl = sum([item['realized_pnl_ntd'] for item in realized_pnl_breakdown if item['remaining_shares'] > 0])
-            closed_positions_realized_pnl = sum([item['realized_pnl_ntd'] for item in realized_pnl_breakdown if item['remaining_shares'] == 0])
+            current_holdings_realized_pnl = sum([item['realized_pnl_twd'] for item in realized_pnl_breakdown if item['remaining_shares'] > 0])
+            closed_positions_realized_pnl = sum([item['realized_pnl_twd'] for item in realized_pnl_breakdown if item['remaining_shares'] == 0])
             
             # Calculate unrealized P&L for current holdings
             unrealized_pnl_data = self.calculate_unrealized_pnl(filters)
-            unrealized_pnl_ntd = unrealized_pnl_data.get('unrealized_pnl', 0)
+            unrealized_pnl_twd = unrealized_pnl_data.get('unrealized_pnl', 0)
             
             # Calculate True Cash Earnings
             # True Cash Earnings = Net Profit + Unrealized P&L + Dividends - Net Cash Invested  
-            net_cash_invested = total_deposits_ntd - total_withdrawals_ntd
-            true_cash_earnings = net_after_fees_ntd + unrealized_pnl_ntd + total_dividends_ntd - net_cash_invested
+            net_cash_invested = total_deposits_twd - total_withdrawals_twd
+            true_cash_earnings = net_after_fees_twd + unrealized_pnl_twd + total_dividends_twd - net_cash_invested
             
             return {
-                'total_sales': total_sales_ntd,
-                'total_purchases': total_purchases_ntd,
-                'total_dividends': total_dividends_ntd,
-                'total_fees': total_fees_ntd,
-                'total_taxes': total_taxes_ntd,
-                'total_deposits': total_deposits_ntd,
-                'total_withdrawals': total_withdrawals_ntd,
+                'total_sales': total_sales_twd,
+                'total_purchases': total_purchases_twd,
+                'total_dividends': total_dividends_twd,
+                'total_fees': total_fees_twd,
+                'total_taxes': total_taxes_twd,
+                'total_deposits': total_deposits_twd,
+                'total_withdrawals': total_withdrawals_twd,
                 'total_transactions': total_transactions,
-                'realized_gain_loss': realized_gain_loss_ntd,
-                'net_after_fees': net_after_fees_ntd,
-                'unrealized_pnl': unrealized_pnl_ntd,
+                'realized_gain_loss': realized_gain_loss_twd,
+                'net_after_fees': net_after_fees_twd,
+                'unrealized_pnl': unrealized_pnl_twd,
                 'net_cash_invested': net_cash_invested,
                 'true_cash_earnings': true_cash_earnings,
                 'realized_pnl_breakdown': realized_pnl_breakdown,
@@ -934,7 +942,7 @@ class PortfolioAPI:
         
         positions_query += " GROUP BY t.symbol, t.broker, t.currency ORDER BY t.symbol"
         
-        total_realized_gain_loss_ntd = 0
+        total_realized_gain_loss_twd = 0
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -950,11 +958,11 @@ class PortfolioAPI:
                     cost_of_sold_shares = invested * (sold / bought) if bought > 0 else 0
                     realized_gain_loss = received - cost_of_sold_shares
                     
-                    # Convert to NTD
-                    realized_gain_loss_ntd = self.convert_to_ntd(realized_gain_loss, currency or 'NTD')
-                    total_realized_gain_loss_ntd += realized_gain_loss_ntd
+                    # Convert to TWD
+                    realized_gain_loss_twd = self.convert_to_twd(realized_gain_loss, currency or 'TWD')
+                    total_realized_gain_loss_twd += realized_gain_loss_twd
         
-        return total_realized_gain_loss_ntd
+        return total_realized_gain_loss_twd
         
     def _get_realized_pnl_breakdown(self, filters=None):
         """Get detailed breakdown of realized P&L by symbol"""
@@ -1013,8 +1021,8 @@ class PortfolioAPI:
                     cost_of_sold_shares = invested * (sold / bought) if bought > 0 else 0
                     realized_gain_loss = received - cost_of_sold_shares
                     
-                    # Convert to NTD
-                    realized_gain_loss_ntd = self.convert_to_ntd(realized_gain_loss, currency or 'NTD')
+                    # Convert to TWD
+                    realized_gain_loss_twd = self.convert_to_twd(realized_gain_loss, currency or 'TWD')
                     
                     # Calculate if this position is still held or completely sold
                     remaining_shares = bought - sold
@@ -1029,7 +1037,7 @@ class PortfolioAPI:
                         'total_received': received,
                         'cost_of_sold_shares': cost_of_sold_shares,
                         'realized_pnl': realized_gain_loss,
-                        'realized_pnl_ntd': realized_gain_loss_ntd,
+                        'realized_pnl_twd': realized_gain_loss_twd,
                         'currency': currency,
                         'position_status': 'CLOSED' if remaining_shares == 0 else 'PARTIAL'
                     })
@@ -1360,7 +1368,7 @@ class PortfolioAPI:
             '聯發科': '2454.TW',     # MediaTek
             '鴻海': '2317.TW',       # Foxconn/Hon Hai
             '中鋼': '2002.TW',       # China Steel
-            '富邦台50': '0050.TW',   # Fubon Taiwan 50 ETF
+            '富邦台50': '006208.TW', # Fubon Taiwan 50 ETF
             '台塑': '1301.TW',       # Formosa Plastics
             '台化': '1326.TW',       # Formosa Chemicals
             '中華電': '2412.TW',     # Chunghwa Telecom
@@ -1425,9 +1433,9 @@ class PortfolioAPI:
         symbols = list(set([holding[0] for holding in holdings]))  # symbol is first column
         current_prices = self._get_current_prices(symbols)
         
-        total_unrealized_pnl_ntd = 0
-        total_market_value_ntd = 0
-        total_cost_basis_ntd = 0
+        total_unrealized_pnl_twd = 0
+        total_market_value_twd = 0
+        total_cost_basis_twd = 0
         total_shares = 0
         holdings_details = []
         price_fetch_errors = []
@@ -1445,15 +1453,15 @@ class PortfolioAPI:
             cost_basis = (total_invested * (current_holding / bought_qty)) if bought_qty > 0 else 0
             market_value = current_holding * current_price
             
-            # Convert to NTD
-            cost_basis_ntd = self.convert_to_ntd(cost_basis, currency or 'NTD')
-            market_value_ntd = self.convert_to_ntd(market_value, currency or 'NTD')
+            # Convert to TWD
+            cost_basis_twd = self.convert_to_twd(cost_basis, currency or 'TWD')
+            market_value_twd = self.convert_to_twd(market_value, currency or 'TWD')
             
-            unrealized_pnl_ntd = market_value_ntd - cost_basis_ntd
+            unrealized_pnl_twd = market_value_twd - cost_basis_twd
             
-            total_unrealized_pnl_ntd += unrealized_pnl_ntd
-            total_market_value_ntd += market_value_ntd
-            total_cost_basis_ntd += cost_basis_ntd
+            total_unrealized_pnl_twd += unrealized_pnl_twd
+            total_market_value_twd += market_value_twd
+            total_cost_basis_twd += cost_basis_twd
             total_shares += current_holding
             
             # Add detailed holding information
@@ -1465,21 +1473,21 @@ class PortfolioAPI:
                 'current_price': current_price,
                 'cost_basis': cost_basis,
                 'market_value': market_value,
-                'unrealized_pnl': unrealized_pnl_ntd,
+                'unrealized_pnl': unrealized_pnl_twd,
                 'currency': currency
             })
         
         return {
-            'unrealized_pnl': total_unrealized_pnl_ntd,
-            'total_market_value': total_market_value_ntd,
-            'total_cost_basis': total_cost_basis_ntd,
+            'unrealized_pnl': total_unrealized_pnl_twd,
+            'total_market_value': total_market_value_twd,
+            'total_cost_basis': total_cost_basis_twd,
             'holdings_count': len(holdings),
             'total_shares': total_shares,
             'holdings_details': holdings_details,
             'price_fetch_errors': price_fetch_errors
         }
 
-    def calculate_enhanced_unrealized_pnl(self, filters=None, base_currency='NTD'):
+    def calculate_enhanced_unrealized_pnl(self, filters=None, base_currency='TWD'):
         """Calculate unrealized P&L with enhanced forex conversion and comprehensive symbol mapping"""
         holdings = self._get_current_holdings(filters)
         
@@ -1504,8 +1512,7 @@ class PortfolioAPI:
         
         # Get current forex rates
         forex_rates = {
-            'USDTWD': self.get_forex_rate('USD', 'TWD'),
-            'USDNTD': self.get_forex_rate('USD', 'NTD')  # Same as USDTWD but for clarity
+            'USDTWD': self.get_forex_rate('USD', 'TWD')
         }
         
         total_unrealized_pnl = 0
@@ -1530,8 +1537,14 @@ class PortfolioAPI:
             market_value = current_holding * current_price
             
             # Convert to base currency
-            market_value_base = self.convert_to_ntd(market_value, currency or 'NTD')
-            cost_basis_base = self.convert_to_ntd(cost_basis, currency or 'NTD')
+            if base_currency == 'TWD':
+                market_value_base = self.convert_to_twd(market_value, currency or 'TWD')
+                cost_basis_base = self.convert_to_twd(cost_basis, currency or 'TWD')
+            else:
+                # Use the generic forex conversion for other currencies
+                rate = self.get_forex_rate(currency or 'TWD', base_currency)
+                market_value_base = market_value * rate
+                cost_basis_base = cost_basis * rate
             unrealized_pnl_base = market_value_base - cost_basis_base
             
             total_unrealized_pnl += unrealized_pnl_base
@@ -2048,8 +2061,8 @@ def api_unrealized_pnl_enhanced():
             broker_list = request.args.getlist('broker')
             filters['broker'] = broker_list if len(broker_list) > 1 else broker_list[0] if broker_list else None
         
-        # Get base currency (default to NTD)
-        base_currency = request.args.get('base_currency', 'NTD')
+        # Get base currency (default to TWD)
+        base_currency = request.args.get('base_currency', 'TWD')
         
         print(f"Debug - enhanced unrealized-pnl filters: {filters}, base_currency: {base_currency}")
         result = portfolio_api.calculate_enhanced_unrealized_pnl(filters, base_currency)
@@ -2065,7 +2078,7 @@ def api_unrealized_pnl_enhanced():
             'holdings_count': 0,
             'price_fetch_errors': [],
             'forex_rates_used': {},
-            'base_currency': 'NTD'
+            'base_currency': 'TWD'
         }), 500
 
 @app.route('/api/system-status')
@@ -2118,9 +2131,7 @@ def api_forex_rates():
         # Get commonly used forex rates
         rates = {
             'USDTWD': api.get_forex_rate('USD', 'TWD'),
-            'USDNTD': api.get_forex_rate('USD', 'NTD'),
-            'TWDUSD': api.get_forex_rate('TWD', 'USD'),
-            'NTDUSD': api.get_forex_rate('NTD', 'USD')
+            'TWDUSD': api.get_forex_rate('TWD', 'USD')
         }
         
         return jsonify({

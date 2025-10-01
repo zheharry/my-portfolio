@@ -45,6 +45,24 @@ class MultiBrokerPortfolioParser:
                 'default_account': 'CATHAY-001'
             }
         }
+        
+        # Chinese stock name to ticker symbol mapping (for CATHAY broker only)
+        self.chinese_to_ticker = {
+            '台積電': '2330.TW',
+            '富邦台50': '006208.TW',
+            '聯發科': '2454.TW', 
+            '中鋼': '2002.TW'
+        }
+    
+    def map_chinese_symbol(self, symbol: str, broker: str) -> Tuple[str, Optional[str]]:
+        """
+        Map Chinese stock names to ticker symbols for CATHAY broker
+        Returns (ticker_symbol, chinese_name) tuple
+        For non-CATHAY brokers, returns (symbol, None)
+        """
+        if broker == 'CATHAY' and symbol in self.chinese_to_ticker:
+            return self.chinese_to_ticker[symbol], symbol
+        return symbol, None
     
     def setup_logging(self):
         """Configure logging"""
@@ -1030,9 +1048,13 @@ class MultiBrokerPortfolioParser:
                     else:
                         formatted_date = date_str
                     
+                    # Map Chinese symbol to ticker for CATHAY broker
+                    ticker_symbol, chinese_name = self.map_chinese_symbol(symbol, 'CATHAY')
+                    
                     transaction = {
                         'transaction_date': formatted_date,
-                        'symbol': symbol,
+                        'symbol': ticker_symbol,
+                        'chinese_name': chinese_name,
                         'transaction_type': transaction_type,
                         'quantity': quantity,
                         'price': price,
@@ -1118,6 +1140,8 @@ class MultiBrokerPortfolioParser:
                 cursor.execute("ALTER TABLE transactions ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP")
             if 'currency' not in columns:
                 cursor.execute("ALTER TABLE transactions ADD COLUMN currency TEXT DEFAULT 'USD'")
+            if 'chinese_name' not in columns:
+                cursor.execute("ALTER TABLE transactions ADD COLUMN chinese_name TEXT")
             
             # Determine currency and display broker name based on broker type
             if broker == 'CATHAY':
@@ -1130,13 +1154,14 @@ class MultiBrokerPortfolioParser:
             for transaction in data['transactions']:
                 cursor.execute("""
                     INSERT OR REPLACE INTO transactions 
-                    (account_id, transaction_date, symbol, transaction_type, quantity, price, 
+                    (account_id, transaction_date, symbol, chinese_name, transaction_type, quantity, price, 
                      amount, fee, tax, net_amount, broker, order_id, description, source_file, currency)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     account_id,
                     transaction.get('transaction_date'),
                     transaction.get('symbol'),
+                    transaction.get('chinese_name'),  # Will be None for non-CATHAY brokers
                     transaction.get('transaction_type'),
                     transaction.get('quantity', 0),
                     transaction.get('price', 0),
