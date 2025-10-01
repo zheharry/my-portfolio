@@ -26,9 +26,17 @@ class PortfolioDashboard {
         document.getElementById('clearFilters').addEventListener('click', () => this.clearFilters());
         document.getElementById('exportData').addEventListener('click', () => this.exportData());
         
+        // Add specific listener for year filter to update date range
+        const yearFilter = document.getElementById('yearFilter');
+        if (yearFilter) {
+            yearFilter.addEventListener('change', (event) => {
+                this.handleYearFilterChange(event.target.value);
+            });
+        }
+        
         // Auto-apply filters on change for better UX
         const filterElements = [
-            'yearFilter', 'startDateFilter', 'endDateFilter'
+            'startDateFilter', 'endDateFilter'
         ];
         
         filterElements.forEach(id => {
@@ -121,6 +129,9 @@ class PortfolioDashboard {
                     document.getElementById('startDateFilter').value = startDate;
                     document.getElementById('endDateFilter').value = endDate;
                     
+                    // Check if selected range matches a full year
+                    dashboardInstance.updateYearFilterFromDateRange(startDate, endDate);
+                    
                     // Apply filters automatically
                     await dashboardInstance.applyFilters();
                     
@@ -142,6 +153,9 @@ class PortfolioDashboard {
                         document.getElementById('startDateFilter').value = start;
                         document.getElementById('endDateFilter').value = end;
                         
+                        // Check if selected range matches a full year
+                        dashboardInstance.updateYearFilterFromDateRange(start, end);
+                        
                         // Apply filters
                         try {
                             await dashboardInstance.applyFilters();
@@ -158,6 +172,57 @@ class PortfolioDashboard {
         } catch (error) {
             console.error('❌ Error initializing date range picker:', error);
             console.error('📍 Stack trace:', error.stack);
+        }
+    }
+
+    // Handle year filter change to update date range
+    handleYearFilterChange(selectedYear) {
+        if (!selectedYear) {
+            // If no year selected, clear the date range
+            if (this.dateRangePicker) {
+                this.dateRangePicker.clearSelection();
+            }
+            document.getElementById('startDateFilter').value = '';
+            document.getElementById('endDateFilter').value = '';
+        } else {
+            // Set date range to the selected year
+            const startDate = `${selectedYear}-01-01`;
+            const endDate = `${selectedYear}-12-31`;
+            
+            // Update the date range picker
+            if (this.dateRangePicker) {
+                this.dateRangePicker.setDateRange(startDate, endDate);
+            }
+            
+            // Update hidden inputs for backward compatibility
+            document.getElementById('startDateFilter').value = startDate;
+            document.getElementById('endDateFilter').value = endDate;
+        }
+        
+        // Apply filters with a small delay
+        clearTimeout(this.filterTimeout);
+        this.filterTimeout = setTimeout(() => {
+            this.applyFilters();
+        }, 300);
+    }
+
+    // Update year filter when date range is manually changed
+    updateYearFilterFromDateRange(startDate, endDate) {
+        const yearFilter = document.getElementById('yearFilter');
+        if (!yearFilter) return;
+        
+        // Check if the selected range is exactly one full year
+        const startYear = startDate.substring(0, 4);
+        const endYear = endDate.substring(0, 4);
+        
+        if (startYear === endYear && 
+            startDate === `${startYear}-01-01` && 
+            endDate === `${startYear}-12-31`) {
+            // This is a full year range, update the year filter
+            yearFilter.value = startYear;
+        } else {
+            // This is not a full year range, clear the year filter
+            yearFilter.value = '';
         }
     }
 
