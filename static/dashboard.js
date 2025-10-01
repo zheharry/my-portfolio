@@ -1098,19 +1098,23 @@ class PortfolioDashboard {
             if (symbol.endsWith('.TW') || symbol.endsWith('.TWO')) {
                 return 'TAI';
             }
-            // US stocks - determine by broker or common exchanges
-            if (broker && broker.includes('Schwab')) {
-                // Common Schwab exchanges
-                if (symbol.match(/^[A-Z]{1,5}$/)) return 'NMS'; // Nasdaq typically
+            
+            // Cash doesn't have exchange
+            if (symbol.includes('=CASH')) return '';
+            
+            // Known NYSE stocks
+            const nyseStocks = ['DELL', 'BAC', 'JPM', 'WFC', 'GE'];
+            if (nyseStocks.includes(symbol)) {
+                return 'NYQ';
             }
-            if (broker && broker.includes('TD Ameritrade') || broker && broker.includes('TDA')) {
+            
+            // US stocks - determine by broker or common exchanges
+            if (broker && broker.includes('TDA')) {
                 return 'PCX'; // Pacific Exchange
             }
             
-            // Default mappings for common exchanges
-            if (symbol.includes('=CASH')) return ''; // Cash doesn't have exchange
-            
-            return 'NMS'; // Default to Nasdaq for US stocks
+            // Default to Nasdaq for US stocks
+            return 'NMS';
         };
 
         // Helper function to get symbol name (extract from symbol or use as-is)
