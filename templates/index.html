@@ -116,6 +116,15 @@
             font-size: 0.75rem;
         }
         
+        .symbol-search-container .input-group {
+            width: 100%;
+        }
+        
+        .symbol-search-container .btn {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+        }
+        
         .selected-count-text {
             font-size: 0.75rem;
             color: #6c757d;
@@ -318,7 +327,12 @@
                             <span class="selected-count-text" id="symbolCount">0 / 0</span>
                         </div>
                         <div class="symbol-search-container">
-                            <input type="text" id="symbolSearchInput" class="form-control form-control-sm" placeholder="搜尋股票代號... (Search symbols...)" />
+                            <div class="input-group input-group-sm">
+                                <input type="text" id="symbolSearchInput" class="form-control form-control-sm" placeholder="搜尋股票代號... (Search symbols...)" />
+                                <button class="btn btn-outline-secondary" type="button" id="clearSymbolSearch" style="display: none;">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
                         </div>
                         <div class="multi-select-list" id="symbolFilter" data-max-height="120px">
                             <!-- Checkboxes will be populated here -->

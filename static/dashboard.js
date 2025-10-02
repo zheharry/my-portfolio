@@ -388,9 +388,28 @@ class PortfolioDashboard {
     // Initialize symbol search functionality
     initializeSymbolSearch() {
         const searchInput = document.getElementById('symbolSearchInput');
+        const clearButton = document.getElementById('clearSymbolSearch');
+        
         if (searchInput) {
+            // Filter symbols on input
             searchInput.addEventListener('input', (e) => {
                 this.filterSymbols(e.target.value);
+                // Show/hide clear button based on input value
+                if (clearButton) {
+                    clearButton.style.display = e.target.value ? 'block' : 'none';
+                }
+            });
+        }
+        
+        // Clear button functionality
+        if (clearButton) {
+            clearButton.addEventListener('click', () => {
+                if (searchInput) {
+                    searchInput.value = '';
+                    this.filterSymbols('');
+                    clearButton.style.display = 'none';
+                    searchInput.focus();
+                }
             });
         }
     }
@@ -744,10 +763,14 @@ class PortfolioDashboard {
         // Remove all current symbol checkboxes
         container.innerHTML = '';
         
-        // Clear search input
+        // Clear search input and hide clear button
         const searchInput = document.getElementById('symbolSearchInput');
+        const clearButton = document.getElementById('clearSymbolSearch');
         if (searchInput) {
             searchInput.value = '';
+        }
+        if (clearButton) {
+            clearButton.style.display = 'none';
         }
         
         // Reset stored symbols array
