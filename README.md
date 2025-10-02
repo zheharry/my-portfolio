@@ -151,6 +151,137 @@ The `.gitignore` file is configured to prevent accidental upload of:
 
 This application processes sensitive financial data. All personal financial information is stored locally and never transmitted externally.
 
+## Broker Transaction Mapping Rules
+
+This section documents how different broker transaction types are mapped to standardized Categories and Actions for consistent display across the web interface.
+
+### 1. 國泰證券 (Cathay Securities) - Taiwan
+
+**File Format:** CSV  
+**Currency:** NTD (New Taiwan Dollar)  
+**Account Format:** CATHAY-{account_number}
+
+| Original Transaction Type | Category | Action | Description |
+|--------------------------|----------|---------|-------------|
+| `買進`, `現買` | Buy | Securities Purchased | Stock purchase transactions |
+| `賣出`, `現賣` | Sell | Securities Sold | Stock sale transactions |
+
+**Special Features:**
+- Chinese stock names are mapped to US ticker symbols where applicable
+- Automatic currency detection (NTD)
+- Fee and tax extraction from CSV columns
+- Support for quantity, price, and net amount calculations
+
+### 2. Charles Schwab (Post-TDA Merger)
+
+**File Format:** PDF  
+**Currency:** USD  
+**Account Format:** SCHWAB-{account_number}
+
+| Original Transaction Type | Category | Action | Description |
+|--------------------------|----------|---------|-------------|
+| `BUY`, `Buy`, `Purchase` | Buy | Securities Purchased | Stock/security purchases |
+| `SELL`, `Sale`, `Sell` | Sell | Securities Sold | Stock/security sales |
+| `INTEREST` | Interest | Credit | Interest income |
+| `WITHDRAWAL` | Withdrawal | Cash Debit | Money withdrawn from account |
+| `DEPOSIT` | Deposit | Cash Credit | Money deposited to account |
+| `DIVIDEND` | Dividend | Income | Dividend payments |
+| `TAX` | Interest | NRA Tax | Non-resident alien tax withheld |
+| `JOURNAL` | Withdrawal | Journaled | Journal transfers between accounts |
+| `MONEYLINK` | Withdrawal | MoneyLink | MoneyLink transfer transactions |
+
+**Transaction Detection Patterns:**
+- **Buy:** `purchase`, `buy`, `bought`, `subscription`
+- **Sell:** `sale`, `sold`, `redemption`
+- **Interest:** `interest`, `credit interest`, `SCHWAB1 INT`
+- **Withdrawal:** `withdrawal`, `MoneyLink Txn`
+- **Deposit:** `deposit`, `funds received`
+- **Tax:** `NRA tax`, `tax`
+
+### 3. TD Ameritrade (Legacy/Historical)
+
+**File Format:** PDF  
+**Currency:** USD  
+**Account Format:** TDA-{account_number}
+
+| Original Transaction Type | Category | Action | Description |
+|--------------------------|----------|---------|-------------|
+| `BUY` | Buy | Securities Purchased | Stock/security purchases |
+| `SELL` | Sell | Securities Sold | Stock/security sales |
+| `DIVIDEND` | Dividend | Income | Dividend payments via "Div/Int - Income" |
+| `INTEREST` | Interest | Credit | Interest income |
+| `JOURNAL` | Withdrawal | Journaled | Journal transfers ("Journal - Other") |
+| `TRANSFER` | Withdrawal | Cash Debit | Account transfers |
+
+**Transaction Detection Patterns:**
+- **Buy:** `Buy - Securities Purchased`
+- **Sell:** `Sell - Securities Sold`
+- **Dividend:** `Div/Int - Income`, `QUALIFIED DIVIDENDS`
+- **Journal:** `Journal - Other`, `Journal - Funds Disbursed`
+- **Transfer:** `TDA TO CS&CO TRANSFER`
+
+### 4. Unknown/Other Brokers
+
+**Fallback Rules:**
+
+| Input Condition | Category | Action | Description |
+|----------------|----------|---------|-------------|
+| `net_amount > 0` AND `symbol = null` | Deposit | Cash Credit | Generic positive cash flow |
+| `net_amount < 0` AND `symbol = null` | Withdrawal | Cash Debit | Generic negative cash flow |
+| Unrecognized transaction_type | [transaction_type] | - | Pass-through original type |
+
+### Transaction Type Standardization
+
+The parser applies consistent cash flow logic:
+
+**Negative Amounts (Cash Out):**
+- `BUY` - Purchasing securities
+- `WITHDRAWAL` - Money leaving account  
+- `TAX` - Tax payments
+
+**Positive Amounts (Cash In):**
+- `SELL` - Selling securities
+- `DEPOSIT` - Money entering account
+- `DIVIDEND` - Dividend income
+- `INTEREST` - Interest income
+- `JOURNAL` - Journal credits
+- `OTHER` - Other income
+
+### Configuration Files
+
+Parsing rules are defined in:
+- `/config/parsing_rules.json` - Main parsing patterns and keywords
+- `/archive/development-tools/parsing_rules.json` - Development/legacy rules
+- `/scripts/multi_broker_parser.py` - Core parsing logic
+- `/app.py` - Web UI mapping function (`map_transaction_to_category_action`)
+
+### Adding New Brokers
+
+To add support for a new broker:
+
+1. **Update broker configuration** in `multi_broker_parser.py`:
+   ```python
+   'NEW_BROKER': {
+       'name': 'New Broker Name',
+       'account_patterns': [r'Account:\s*(\d+-\d+)'],
+       'file_pattern': r'Statement_.*\.PDF',
+       'default_account': 'NEWBROKER-001'
+   }
+   ```
+
+2. **Add transaction type mapping** in `app.py`:
+   ```python
+   elif transaction_type in ['NEW_BUY_TYPE']:
+       return {'category': 'Buy', 'action': 'Securities Purchased'}
+   ```
+
+3. **Update parsing patterns** in `config/parsing_rules.json`:
+   ```json
+   "transaction_keywords": {
+       "buy_patterns": ["BUY", "PURCHASE", "NEW_BUY_KEYWORD"]
+   }
+   ```
+
 ## Development Status
 
 This project is actively in development. Current features include multi-broker statement processing and basic web dashboard functionality.

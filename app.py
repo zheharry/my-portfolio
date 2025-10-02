@@ -23,6 +23,63 @@ class PortfolioAPI:
         self._last_yahoo_check = None
         self.ensure_database_exists()
     
+    def map_transaction_to_category_action(self, transaction_type, symbol=None, net_amount=None):
+        """Map transaction_type to Category and Action for web UI display"""
+        if not transaction_type:
+            return {'category': 'Unknown', 'action': ''}
+        
+        transaction_type = str(transaction_type).strip()
+        
+        # Handle Chinese transaction types from 國泰證券
+        if transaction_type in ['買進', '現買', 'BUY']:
+            return {'category': 'Buy', 'action': 'Securities Purchased'}
+        elif transaction_type in ['賣出', '現賣', 'SELL']:
+            return {'category': 'Sell', 'action': 'Securities Sold'}
+        
+        # Handle English transaction types from Schwab/TDA  
+        elif transaction_type in ['BUY', 'Buy']:
+            return {'category': 'Buy', 'action': 'Securities Purchased'}
+        elif transaction_type in ['SELL', 'Sale', 'Sell']:
+            return {'category': 'Sell', 'action': 'Securities Sold'}
+        elif transaction_type in ['SPLIT', 'Split']:
+            return {'category': 'Investment', 'action': 'Stock Split'}
+        
+        # Handle other transaction types from statements first
+        elif transaction_type in ['Interest', 'INTEREST']:
+            return {'category': 'Interest', 'action': 'Credit'}
+        elif transaction_type in ['Dividend', 'DIVIDEND']:
+            return {'category': 'Dividend', 'action': 'Income'}
+        
+        # Handle TAX transactions first (before general deposit/withdrawal logic)
+        elif 'TAX' in transaction_type.upper():
+            return {'category': 'Interest', 'action': 'NRA Tax'}
+        elif 'JOURNAL' in transaction_type.upper():
+            return {'category': 'Withdrawal', 'action': 'Journaled'}
+        elif 'MONEYLINK' in transaction_type.upper():
+            return {'category': 'Withdrawal', 'action': 'MoneyLink'}
+        
+        # Handle OTHER transaction types with more intelligence
+        elif transaction_type == 'OTHER':
+            # First check if it's a cash transaction (no symbol)
+            if not symbol or symbol == '' or symbol == 'nan':
+                if net_amount and float(net_amount) > 0:
+                    return {'category': 'Deposit', 'action': 'Cash Credit'}
+                elif net_amount and float(net_amount) < 0:
+                    return {'category': 'Withdrawal', 'action': 'Cash Debit'}
+            # For OTHER transactions with symbols, categorize as Investment/Other for now
+            # These might be corporate actions, stock splits, etc.
+            return {'category': 'Investment', 'action': 'Corporate Action'}
+        
+        # Handle special transaction types (deposits/withdrawals for other types)
+        elif not symbol or symbol == '' or symbol == 'nan':
+            if net_amount and float(net_amount) > 0:
+                return {'category': 'Deposit', 'action': 'Cash Credit'}
+            elif net_amount and float(net_amount) < 0:
+                return {'category': 'Withdrawal', 'action': 'Cash Debit'}
+        
+        # Default case
+        return {'category': transaction_type, 'action': ''}
+    
     def ensure_database_exists(self):
         """Create database and tables if they don't exist"""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -654,25 +711,16 @@ class PortfolioAPI:
                     if len(transaction_type_filter) > 0:
                         conditions = []
                         for trans_type in transaction_type_filter:
-                            if trans_type == 'DEPOSIT':
-                                conditions.append("(t.net_amount > 0 AND t.symbol IS NULL)")
-                            elif trans_type == 'WITHDRAWAL':
-                                conditions.append("(t.net_amount < 0 AND t.symbol IS NULL)")
-                            else:
-                                conditions.append("t.transaction_type = ?")
-                                params.append(trans_type)
+                            # Use exact transaction_type matching for precise filtering
+                            conditions.append("t.transaction_type = ?")
+                            params.append(trans_type)
                         
                         if conditions:
                             query += f" AND ({' OR '.join(conditions)})"
                 else:
                     # Single transaction type (backward compatibility)
-                    if transaction_type_filter == 'DEPOSIT':
-                        query += " AND t.net_amount > 0 AND t.symbol IS NULL"
-                    elif transaction_type_filter == 'WITHDRAWAL':
-                        query += " AND t.net_amount < 0 AND t.symbol IS NULL"
-                    else:
-                        query += " AND t.transaction_type = ?"
-                        params.append(transaction_type_filter)
+                    query += " AND t.transaction_type = ?"
+                    params.append(transaction_type_filter)
             
             if filters.get('start_date'):
                 query += " AND t.transaction_date >= ?"
@@ -691,8 +739,24 @@ class PortfolioAPI:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(query, params)
-            return [dict(zip([col[0] for col in cursor.description], row)) 
-                   for row in cursor.fetchall()]
+            
+            # Get transactions and add Category and Action fields
+            transactions = []
+            for row in cursor.fetchall():
+                transaction = dict(zip([col[0] for col in cursor.description], row))
+                
+                # Add Category and Action fields based on transaction_type
+                category_action = self.map_transaction_to_category_action(
+                    transaction.get('transaction_type'),
+                    transaction.get('symbol'),
+                    transaction.get('net_amount')
+                )
+                transaction['category'] = category_action['category']
+                transaction['action'] = category_action['action']
+                
+                transactions.append(transaction)
+            
+            return transactions
     
     def get_portfolio_summary(self, filters=None):
         """Get enhanced portfolio summary with fees and multi-select support, converted to TWD"""
@@ -759,25 +823,16 @@ class PortfolioAPI:
                     if len(transaction_type_filter) > 0:
                         conditions = []
                         for trans_type in transaction_type_filter:
-                            if trans_type == 'DEPOSIT':
-                                conditions.append("(t.net_amount > 0 AND t.symbol IS NULL)")
-                            elif trans_type == 'WITHDRAWAL':
-                                conditions.append("(t.net_amount < 0 AND t.symbol IS NULL)")
-                            else:
-                                conditions.append("t.transaction_type = ?")
-                                params.append(trans_type)
+                            # Use exact transaction_type matching for precise filtering
+                            conditions.append("t.transaction_type = ?")
+                            params.append(trans_type)
                         
                         if conditions:
                             query += f" AND ({' OR '.join(conditions)})"
                 else:
-                    # Single transaction type (backward compatibility)
-                    if transaction_type_filter == 'DEPOSIT':
-                        query += " AND t.net_amount > 0 AND t.symbol IS NULL"
-                    elif transaction_type_filter == 'WITHDRAWAL':
-                        query += " AND t.net_amount < 0 AND t.symbol IS NULL"
-                    else:
-                        query += " AND t.transaction_type = ?"
-                        params.append(transaction_type_filter)
+                    # Single transaction type (backward compatibility) - use exact matching
+                    query += " AND t.transaction_type = ?"
+                    params.append(transaction_type_filter)
             
             if filters.get('year'):
                 query += " AND strftime('%Y', t.transaction_date) = ?"

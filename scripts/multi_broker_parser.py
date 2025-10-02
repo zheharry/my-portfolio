@@ -115,9 +115,17 @@ class MultiBrokerPortfolioParser:
                     broker TEXT,
                     order_id TEXT,
                     description TEXT,
+                    split_ratio TEXT DEFAULT NULL,
                     FOREIGN KEY (account_id) REFERENCES accounts (account_id)
                 )
             """)
+            
+            # Add split_ratio column if it doesn't exist (for backward compatibility)
+            try:
+                cursor.execute("ALTER TABLE transactions ADD COLUMN split_ratio TEXT DEFAULT NULL")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
             
             # Enhanced positions table
             cursor.execute("""
@@ -570,8 +578,27 @@ class MultiBrokerPortfolioParser:
                 else:
                     current_date = f"{current_year}-01-01"
                 
+                # Special handling for multi-line account transfers and journaled shares
+                combined_line = rest_of_line
+                if ('other' in rest_of_line.lower() and 
+                    ('account transfer' in rest_of_line.lower() or 'activity' in rest_of_line.lower())):
+                    # Look ahead for continuation lines with stock transfer info
+                    lookahead_lines = []
+                    for j in range(1, 3):  # Look ahead up to 2 lines
+                        if i + j < len(lines):
+                            next_line = lines[i + j].strip()
+                            if next_line:
+                                lookahead_lines.append(next_line)
+                                # Check if this line contains "Journaled Shares" or numeric data
+                                if ('journaled shares' in next_line.lower() or
+                                    (re.search(r'\d+\.\d{4}', next_line) and  # Quantity pattern
+                                     re.search(r'\d+\.\d{2}', next_line))):   # Price/Amount pattern
+                                    combined_line = rest_of_line + " " + " ".join(lookahead_lines)
+                                    i += j  # Skip the consumed lines
+                                    break
+                
                 # Parse detailed transaction line
-                transaction = self.parse_detailed_transaction_line(rest_of_line, current_date)
+                transaction = self.parse_detailed_transaction_line(combined_line, current_date)
                 if transaction:
                     transactions.append(transaction)
                 
@@ -579,8 +606,31 @@ class MultiBrokerPortfolioParser:
                 
             elif current_date and line.strip():
                 # This might be a continuation line without a date - use the current date
-                # Skip lines that are just industry fees or other non-transaction info
-                if not any(skip_word in line for skip_word in ['Industry Fee', 'NAME_PART', 'Page', 'Total']):
+                # Enhanced filtering for banner lines, headers, and non-transaction content
+                skip_patterns = [
+                    'Industry Fee', 'NAME_PART', 'Page', 'Total',
+                    'Transaction Details', 'Date Category Action', 'Symbol/', 'CUSIP', 'Description',
+                    'Quantity', 'Price/Rate', 'Charges/', 'Interest($)', 'Amount($)', 'Realized',
+                    'Gain/(Loss)', 'per Share', 'Statement Period', 'continued', 'Schwab One',
+                    'International Account', 'of', 'YUAN JUNG CHENG',  # Account holder info
+                    'BROKERAGE', 'STATEMENT', 'ACCOUNT', 'PERIOD',
+                    'Date\s+Category\s+Action',  # Column headers
+                ]
+                
+                # Check if line contains skip patterns
+                should_skip = any(
+                    skip_pattern.lower() in line.lower() if not skip_pattern.startswith('Date\\s+') 
+                    else re.search(skip_pattern, line, re.IGNORECASE)
+                    for skip_pattern in skip_patterns
+                )
+                
+                # Also skip lines that are just column headers or formatting
+                if (re.match(r'^[A-Za-z\s/()$]+$', line) and 
+                    len(line.split()) <= 10 and 
+                    not re.search(r'\d', line)):
+                    should_skip = True
+                
+                if not should_skip:
                     # For new Schwab format, check if this looks like a transaction line
                     # Look for Category indicators (Sale, Purchase, Interest, Withdrawal, etc.)
                     # Even if Action column is empty
@@ -606,6 +656,24 @@ class MultiBrokerPortfolioParser:
     
     def parse_detailed_transaction_line(self, line: str, transaction_date: str) -> Dict:
         """Parse a single detailed transaction line from Schwab format"""
+        
+        # Early validation: Skip obvious header/banner lines
+        line_lower = line.lower()
+        header_indicators = [
+            'transaction details', 'date category action', 'symbol/cusip', 'description',
+            'quantity', 'price/rate', 'charges/', 'interest($)', 'amount($)', 'realized',
+            'gain/(loss)', 'per share', 'brokerage statement', 'account period',
+            'statement period', 'schwab one', 'international account'
+        ]
+        
+        # Check if this line is clearly a header or banner
+        if any(indicator in line_lower for indicator in header_indicators):
+            return None
+            
+        # Skip lines that are just formatting or contain only text without numbers
+        if re.match(r'^[A-Za-z\s/()$-]+$', line) and len(line.split()) <= 6:
+            return None
+        
         transaction = {
             'transaction_date': transaction_date,
             'transaction_type': 'OTHER',
@@ -620,7 +688,6 @@ class MultiBrokerPortfolioParser:
         }
         
         # Identify transaction type - expand pattern matching for the new Schwab format
-        line_lower = line.lower()
         
         # For new Schwab format, Category and Action are in separate columns
         # Category: Sale, Purchase, Interest, Withdrawal, etc.
@@ -631,6 +698,10 @@ class MultiBrokerPortfolioParser:
             transaction['transaction_type'] = 'SELL'
         elif ('purchase' in line_lower or 'buy' in line_lower or 
               'bought' in line_lower or 'subscription' in line_lower):
+            transaction['transaction_type'] = 'BUY'
+        elif ('purchase' in line_lower and 'reinvested shares' in line_lower):
+            # Special case: Dividend reinvestment should be treated as BUY
+            # Example: "10/01 Purchase Reinvested Shares VOO VANGUARD S&P 500 ETF 0.4415 520.8799 (229.95)"
             transaction['transaction_type'] = 'BUY'
         elif 'withdrawal' in line_lower:
             transaction['transaction_type'] = 'WITHDRAWAL'
@@ -651,9 +722,93 @@ class MultiBrokerPortfolioParser:
                 transaction['transaction_type'] = 'TAX'
             else:
                 transaction['transaction_type'] = 'DIVIDEND'
+        elif ('other' in line_lower and ('account transfer' in line_lower or 'journaled shares' in line_lower)):
+            # Special case: Stock transfers into account should be treated as BUY
+            # Examples: 
+            # - "Other Account Transfer INTC INTEL CORP 174.0000 19.8700 3,457.38"
+            # - "Other Activity Journaled Shares INTC INTEL CORP 433.0000 21.4100 9,270.53"
+            # Check if this involves a stock symbol (has quantity and price)
+            if (re.search(r'\b[A-Z]{3,5}\b', line) and 
+                re.search(r'\d+\.\d{4}', line) and  # Has quantity pattern
+                re.search(r'\d+\.\d{2}', line)):    # Has price pattern
+                transaction['transaction_type'] = 'BUY'
+            else:
+                # If not a stock transfer, keep as OTHER
+                transaction['transaction_type'] = 'OTHER'
+        elif ('other' in line_lower and ('forward split' in line_lower or 'stock split' in line_lower)):
+            # Special case: Stock splits vs dividend reinvestments
+            # The key distinction is PRICE, not quantity:
+            # - Stock splits (including fractional shares): price = 0.0 (no cost)
+            # - Dividend reinvestments: price > 0.0 (actual purchase price)
+            
+            # Extract quantity first
+            quantity_match = re.search(r'\(?([\d,]+\.?\d{0,4})\)?', line)
+            quantity = 0
+            if quantity_match:
+                quantity = float(quantity_match.group(1).replace(',', ''))
+                # If quantity was in parentheses, make it negative
+                if f'({quantity_match.group(1)})' in line:
+                    quantity = -quantity
+            
+            # All "Stock Split" and "Forward Split" transactions should remain as SPLIT regardless of quantity
+            # because they represent share allocations, not purchases (no price)
+            if 'stock split' in line_lower or 'forward split' in line_lower:
+                # Actual stock splits and forward splits (including fractional shares from split events)
+                # Examples:
+                # - "Other Activity Forward Split SMCI SUPER MICRO COMPUTER INC 1,070.0000"
+                # - "Other Activity Forward Split SUPER MICRO COMPUTER INC FORWARD SPLIT (107.0000)"
+                # - "Other Activity Stock Split NVDA NVIDIA CORP 1,127.0000"
+                transaction['transaction_type'] = 'SPLIT'
         
-        # For stock transactions, parse the structured format
-        if transaction['transaction_type'] in ['SELL', 'BUY']:
+        # Special handling for SPLIT transactions
+        if transaction['transaction_type'] == 'SPLIT':
+            # Extract symbol for split transactions - look for known stock symbols
+            # Handle specific cases first
+            if 'SMCI' in line.upper() or 'SUPER MICRO COMPUTER' in line.upper():
+                transaction['symbol'] = 'SMCI'
+            elif 'NVDA' in line.upper() or 'NVIDIA' in line.upper():
+                transaction['symbol'] = 'NVDA'
+            else:
+                # Try to find other stock symbols
+                symbol_match = re.search(r'\b([A-Z]{3,5})\b', line)
+                if symbol_match:
+                    potential_symbol = symbol_match.group(1)
+                    if potential_symbol not in ['CORP', 'INC', 'LLC', 'CLASS', 'FUND', 'SCHWAB', 'BANK', 'OTHER', 'SPLIT', 'FORWARD', 'SUPER', 'STOCK']:
+                        transaction['symbol'] = potential_symbol
+            
+            # Extract quantity for split transactions (can be positive or negative)
+            quantity_match = re.search(r'\(?([\d,]+\.?\d{4})\)?', line)
+            if quantity_match:
+                quantity = float(quantity_match.group(1).replace(',', ''))
+                # If quantity was in parentheses, make it negative
+                if f'({quantity_match.group(1)})' in line:
+                    quantity = -quantity
+                transaction['quantity'] = quantity
+            
+            # For splits, there's no price or monetary amount typically
+            transaction['price'] = 0
+            transaction['amount'] = 0
+            
+            # Calculate split ratio based on split type
+            if 'forward split' in line.lower():
+                if transaction['quantity'] > 0:
+                    transaction['split_ratio'] = 'forward_split_positive'
+                elif transaction['quantity'] < 0:
+                    transaction['split_ratio'] = 'forward_split_negative'
+                else:
+                    transaction['split_ratio'] = 'forward_split'
+            elif 'stock split' in line.lower():
+                # For regular stock splits like NVDA 10:1, the quantity represents shares added
+                # NVDA: 1,127 additional shares from 10:1 split means ~112.7 original shares
+                if transaction['quantity'] > 0:
+                    transaction['split_ratio'] = 'stock_split_10_for_1'  # Common ratio
+                else:
+                    transaction['split_ratio'] = 'stock_split'
+            else:
+                transaction['split_ratio'] = None
+            
+        # For regular stock transactions, parse the structured format
+        elif transaction['transaction_type'] in ['SELL', 'BUY']:
             # Extract symbol (3-5 uppercase letters) - handle new Schwab format
             # In new format, symbol appears after Category and Action columns
             symbol_match = re.search(r'\b([A-Z]{3,5})\b', line)
@@ -690,7 +845,7 @@ class MultiBrokerPortfolioParser:
                     if company_match:
                         transaction['description'] = f"{transaction['symbol']} {company_match.group(1).strip()}"
             
-            # Parse numeric values using the new Schwab format understanding
+            # Parse numeric values using the new Schwab format understanding (only for BUY/SELL)
             # Example line: "06/12 Purchase    GOOGL    ALPHABET INC CLASS A    360.0000    179.7500    (64,710.00)"
             
             # Try the new Schwab format first (most common now)
@@ -976,7 +1131,11 @@ class MultiBrokerPortfolioParser:
                     qty_match = re.search(r'(\d+\.?\d+)\s+\(?([\d,]+\.?\d*)\)?\s*$', line)
                     if qty_match:
                         try:
-                            transaction['quantity'] = float(qty_match.group(1).replace(',', ''))
+                            quantity = float(qty_match.group(1).replace(',', ''))
+                            # Make SELL quantities negative for consistency
+                            if transaction['transaction_type'] == 'SELL':
+                                quantity = -abs(quantity)
+                            transaction['quantity'] = quantity
                             transaction['price'] = float(qty_match.group(2).replace(',', ''))
                         except ValueError:
                             pass
@@ -1040,6 +1199,10 @@ class MultiBrokerPortfolioParser:
                     fee = float(str(row.get('手續費', '0')).replace(',', '')) if pd.notna(row.get('手續費')) else 0
                     tax = float(str(row.get('交易稅', '0')).replace(',', '')) if pd.notna(row.get('交易稅')) else 0
                     order_id = str(row.get('委託書號', ''))
+                    
+                    # Make SELL quantities negative for consistency
+                    if transaction_type == 'SELL':
+                        quantity = -abs(quantity)
                     
                     # Convert date format
                     if '/' in date_str:
@@ -1155,8 +1318,8 @@ class MultiBrokerPortfolioParser:
                 cursor.execute("""
                     INSERT OR REPLACE INTO transactions 
                     (account_id, transaction_date, symbol, chinese_name, transaction_type, quantity, price, 
-                     amount, fee, tax, net_amount, broker, order_id, description, source_file, currency)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     amount, fee, tax, net_amount, broker, order_id, description, source_file, currency, split_ratio)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     account_id,
                     transaction.get('transaction_date'),
@@ -1173,7 +1336,8 @@ class MultiBrokerPortfolioParser:
                     transaction.get('order_id'),
                     transaction.get('description'),
                     str(file_path),
-                    currency
+                    currency,
+                    transaction.get('split_ratio')
                 ))
             
             conn.commit()
@@ -1451,10 +1615,14 @@ class MultiBrokerPortfolioParser:
         after_symbol = line[symbol_pos + len(symbol):]
         
         # Look for company name and then numeric values
-        # Skip company description and find the numeric part
-        company_end = re.search(r'([A-Z\s&,]+?)\s+([0-9,]+\.?\d*)', after_symbol)
+        # Skip company description and find the numeric part - be careful with ETF names containing numbers
+        # Use a more precise pattern that looks for decimal numbers (which are likely quantity/price)
+        company_end = re.search(r'([A-Z\s&,0-9]+?)\s+(\d+\.\d{3,4})', after_symbol)
         if not company_end:
-            return None
+            # Fallback to original pattern if decimal pattern doesn't work
+            company_end = re.search(r'([A-Z\s&,]+?)\s+([0-9,]+\.?\d*)', after_symbol)
+            if not company_end:
+                return None
             
         # Extract all numbers after the company description
         numeric_part = after_symbol[company_end.start(2):]

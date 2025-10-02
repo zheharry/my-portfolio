@@ -253,6 +253,10 @@ class PortfolioDashboard {
             this.initializeMultiSelectControls();
             console.log('Multi-select controls initialized');
             
+            console.log('Loading transaction type counts...');
+            await this.loadTransactionTypeCounts();
+            console.log('Transaction type counts loaded');
+
             console.log('Loading transactions (initial - with default filters)...');
             // For initial load, use getFilterValues to get proper broker key conversion
             this.currentFilters = this.getFilterValues();
@@ -834,13 +838,27 @@ class PortfolioDashboard {
             // Display Chinese name if available, otherwise show symbol
             const displaySymbol = transaction.chinese_name || transaction.symbol || '-';
             
+            // Smart amount display logic based on transaction type
+            let displayAmount = 0;
+            if (transaction.transaction_type === 'TAX') {
+                // For TAX transactions, show the tax amount as the main amount
+                displayAmount = Math.abs(transaction.tax || 0);
+            } else if (transaction.amount !== 0) {
+                // For regular transactions, show the amount
+                displayAmount = Math.abs(transaction.amount || 0);
+            } else if (transaction.net_amount !== 0 && !transaction.symbol) {
+                // For cash transactions without amount, show net_amount
+                displayAmount = Math.abs(transaction.net_amount || 0);
+            }
+            
             row.innerHTML = `
                 <td>${this.formatDate(transaction.transaction_date)}</td>
                 <td><strong>${displaySymbol}</strong></td>
-                <td><span class="badge ${transaction.transaction_type === '買進' ? 'bg-success' : 'bg-success'}">${transaction.transaction_type}</span></td>
+                <td><span class="badge ${transaction.category === 'Buy' ? 'bg-success' : transaction.category === 'Sell' ? 'bg-info' : 'bg-secondary'}">${transaction.category || 'Unknown'}</span></td>
+                <td><small class="text-muted">${transaction.action || ''}</small></td>
                 <td><strong>${quantityDisplay}</strong></td>
                 <td>$${this.formatNumber(transaction.price)}</td>
-                <td>$${this.formatNumber(Math.abs(transaction.amount))}</td>
+                <td>$${this.formatNumber(displayAmount)}</td>
                 <td><span class="text-warning">$${this.formatNumber(transaction.fee)}</span></td>
                 <td><span class="text-info">$${this.formatNumber(transaction.tax)}</span></td>
                 <td class="${transaction.net_amount >= 0 ? 'gain' : 'loss'}">${this.formatNetAmount(transaction.net_amount)}</td>
@@ -850,6 +868,83 @@ class PortfolioDashboard {
             `;
             
             tbody.appendChild(row);
+        });
+    }
+
+    // Load all transactions to get total counts for filter checkboxes (static counts)
+    async loadTransactionTypeCounts() {
+        try {
+            // Load ALL transactions without any filters to get total counts
+            const allTransactions = await this.fetchAPI('/api/transactions');
+            this.updateTransactionTypeCounts(allTransactions);
+        } catch (error) {
+            console.error('Error loading transaction type counts:', error);
+        }
+    }
+
+    // Update transaction type counts in filter checkboxes (static counts)
+    updateTransactionTypeCounts(transactionsData = null) {
+        const transactions = transactionsData || this.transactions;
+        if (!transactions || !Array.isArray(transactions)) return;
+
+        // Count transactions by type, consolidating Chinese and English equivalents
+        const consolidatedCounts = {
+            'BUY': 0,
+            'SELL': 0,
+            'JOURNAL': 0,
+            'WITHDRAWAL': 0,
+            'DEPOSIT': 0,
+            'DIVIDEND': 0,
+            'INTEREST': 0,
+            'TAX': 0,
+            'SPLIT': 0,
+            'OTHER': 0
+        };
+
+        transactions.forEach(transaction => {
+            const type = transaction.transaction_type;
+            if (type) {
+                // Consolidate Chinese and English types
+                if (type === 'BUY' || type === '買進' || type === '現買') {
+                    consolidatedCounts['BUY']++;
+                } else if (type === 'SELL' || type === '賣出' || type === '現賣') {
+                    consolidatedCounts['SELL']++;
+                } else if (consolidatedCounts.hasOwnProperty(type)) {
+                    consolidatedCounts[type]++;
+                }
+            }
+        });
+
+        // Update each checkbox label with the consolidated count
+        const typeMapping = {
+            'BUY': 'txType_BUY',
+            'SELL': 'txType_SELL', 
+            'JOURNAL': 'txType_JOURNAL',
+            'WITHDRAWAL': 'txType_WITHDRAWAL',
+            'DEPOSIT': 'txType_DEPOSIT',
+            'DIVIDEND': 'txType_DIVIDEND',
+            'INTEREST': 'txType_INTEREST',
+            'TAX': 'txType_TAX',
+            'SPLIT': 'txType_SPLIT',
+            'OTHER': 'txType_OTHER'
+        };
+
+        // Update counts in the UI
+        Object.entries(typeMapping).forEach(([transactionType, elementId]) => {
+            const checkbox = document.getElementById(elementId);
+            if (checkbox) {
+                const label = checkbox.parentElement.querySelector('label');
+                if (label) {
+                    const count = consolidatedCounts[transactionType] || 0;
+                    // Update the count in the label, preserving the existing text
+                    const labelText = label.innerHTML;
+                    // Replace existing count or add if missing
+                    const updatedText = labelText.includes('(') ? 
+                        labelText.replace(/\(\d+\)/, `(${count})`) : 
+                        labelText + ` <small class="text-muted">(${count})</small>`;
+                    label.innerHTML = updatedText;
+                }
+            }
         });
     }
 
@@ -1228,7 +1323,12 @@ class PortfolioDashboard {
                 'INTEREST': 'Interest',
                 'TRANSFER': 'Transfer',
                 'DEPOSIT': 'Buy',  // Map deposit to Buy for cash
-                'WITHDRAWAL': 'Sell'  // Map withdrawal to Sell for cash
+                'WITHDRAWAL': 'Sell',  // Map withdrawal to Sell for cash
+                // Handle Chinese transaction types from 國泰證券
+                '買進': 'Buy',
+                '現買': 'Buy',
+                '賣出': 'Sell',
+                '現賣': 'Sell'
             };
             return typeMap[type] || type;
         };
@@ -1247,7 +1347,7 @@ class PortfolioDashboard {
 
         // Helper function to determine if accounting should be FIFO
         const getAccounting = (type) => {
-            const fifoTypes = ['SELL', 'DIVIDEND', 'INTEREST'];
+            const fifoTypes = ['SELL', 'DIVIDEND', 'INTEREST', '賣出', '現賣'];
             return fifoTypes.includes(type) ? 'FIFO' : '';
         };
 
@@ -1304,6 +1404,74 @@ class PortfolioDashboard {
                 const tax = parseFloat(t.tax || 0);
                 const totalCommission = fee + tax;
                 
+                // Special handling for SPLIT transactions
+                let sharesOwned = t.quantity || '';
+                let costPerShare = t.price || '';
+                let commission = totalCommission.toString();
+                
+                if (t.transaction_type === 'SPLIT') {
+                    // Handle different types of stock split scenarios:
+                    // 1. Stock splits: can be single record OR multiple records for same event
+                    // 2. Forward splits: paired records (positive + negative on same date)
+                    
+                    let numerator = 10, denominator = 1; // Default 10:1 ratio
+                    let shouldSkip = false;
+                    
+                    if (t.split_ratio) {
+                        if (t.split_ratio.includes('stock_split_10_for_1')) {
+                            // Check if this is part of a multi-record split event
+                            const allSplitTransactions = transactions.filter(st => 
+                                st.transaction_type === 'SPLIT' && 
+                                st.split_ratio && 
+                                st.split_ratio.includes('stock_split')
+                            );
+                            
+                            // If multiple stock split records exist, consolidate them
+                            if (allSplitTransactions.length > 1) {
+                                // Only process the first (main) transaction, skip others
+                                const mainTransaction = allSplitTransactions.find(st => st.quantity > 100); // Main split typically has large quantity
+                                if (t !== mainTransaction) {
+                                    shouldSkip = true; // Skip fractional split records
+                                } else {
+                                    // This is the main transaction - use standard 10:1 ratio
+                                    numerator = 10;
+                                    denominator = 1;
+                                }
+                            } else {
+                                // Single record stock split
+                                numerator = 10;
+                                denominator = 1;
+                            }
+                        } else if (t.split_ratio.includes('forward_split_positive')) {
+                            // Forward split positive entry - find matching negative entry on same date
+                            const splitTransactions = transactions.filter(st => 
+                                st.transaction_type === 'SPLIT' && 
+                                st.transaction_date === t.transaction_date
+                            );
+                            
+                            const positiveEntry = splitTransactions.find(st => st.quantity > 0);
+                            const negativeEntry = splitTransactions.find(st => st.quantity < 0);
+                            
+                            if (positiveEntry && negativeEntry) {
+                                const ratio = Math.abs(positiveEntry.quantity) / Math.abs(negativeEntry.quantity);
+                                numerator = Math.round(ratio);
+                                denominator = 1;
+                            }
+                        } else if (t.split_ratio.includes('forward_split_negative')) {
+                            // Skip negative entries - they're consolidated with positive entries
+                            shouldSkip = true;
+                        }
+                    }
+                    
+                    if (shouldSkip) {
+                        return; // Skip this iteration
+                    }
+                    
+                    sharesOwned = numerator.toString();
+                    costPerShare = denominator.toString();
+                    commission = '0';
+                }
+                
                 rows.push([
                     escapeCSV(rowId++),
                     escapeCSV(symbol),
@@ -1312,9 +1480,9 @@ class PortfolioDashboard {
                     escapeCSV(exchange),
                     escapeCSV(portfolio),
                     escapeCSV(currency),
-                    escapeCSV(t.quantity || ''), // Shares Owned
-                    escapeCSV(t.price || ''), // Cost Per Share
-                    escapeCSV(totalCommission.toString()), // Commission (fee + tax)
+                    escapeCSV(sharesOwned), // Shares Owned (ratio numerator for splits)
+                    escapeCSV(costPerShare), // Cost Per Share (ratio denominator for splits)
+                    escapeCSV(commission), // Commission (0 for splits)
                     escapeCSV(formatDate(t.transaction_date)), // Transaction Date
                     escapeCSV(getTime()), // Transaction Time
                     escapeCSV('0'), // Purchase Exchange Rate

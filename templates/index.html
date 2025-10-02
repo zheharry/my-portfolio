@@ -52,6 +52,7 @@
         }
         .transaction-type-buy { background-color: #d4edda; } /* Light green */
         .transaction-type-sell { background-color: #c8f7c5; } /* Even lighter green instead of red */
+        .transaction-type-split { background-color: #fff3cd; } /* Light yellow for splits */
         .year-performance {
             border-left: 4px solid #007bff;
             padding-left: 1rem;
@@ -148,6 +149,16 @@
             cursor: pointer;
             font-size: 0.875rem;
             user-select: none;
+            width: 100%;
+        }
+        
+        .checkbox-item label strong {
+            color: #212529;
+        }
+        
+        .checkbox-item label .text-muted {
+            font-size: 0.75rem;
+            float: right;
         }
         
         /* Custom scrollbar for multi-select lists */
@@ -323,45 +334,54 @@
                             <span class="selected-count-text" id="transactionTypeCount">0 / 0</span>
                         </div>
                         <div class="multi-select-list" id="transactionTypeFilter" data-max-height="120px">
+                            <!-- Trading Transactions (Most Common) -->
                             <div class="checkbox-item">
                                 <input type="checkbox" id="txType_BUY" value="BUY" checked>
-                                <label for="txType_BUY">買進 (Buy)</label>
+                                <label for="txType_BUY"><strong>買進 (Buy)</strong> <small class="text-muted">(0)</small></label>
                             </div>
                             <div class="checkbox-item">
                                 <input type="checkbox" id="txType_SELL" value="SELL" checked>
-                                <label for="txType_SELL">賣出 (Sell)</label>
+                                <label for="txType_SELL"><strong>賣出 (Sell)</strong> <small class="text-muted">(0)</small></label>
                             </div>
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="txType_DIVIDEND" value="DIVIDEND" checked>
-                                <label for="txType_DIVIDEND">股息 (Dividend)</label>
-                            </div>
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="txType_INTEREST" value="INTEREST" checked>
-                                <label for="txType_INTEREST">利息 (Interest)</label>
-                            </div>
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="txType_TAX" value="TAX" checked>
-                                <label for="txType_TAX">稅款 (Tax)</label>
-                            </div>
+                            
+                            <!-- Account Transfers & Movements -->
                             <div class="checkbox-item">
                                 <input type="checkbox" id="txType_JOURNAL" value="JOURNAL" checked>
-                                <label for="txType_JOURNAL">Journal Entry</label>
-                            </div>
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="txType_TRANSFER" value="TRANSFER" checked>
-                                <label for="txType_TRANSFER">Transfer</label>
-                            </div>
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="txType_OTHER" value="OTHER" checked>
-                                <label for="txType_OTHER">Other</label>
-                            </div>
-                            <div class="checkbox-item">
-                                <input type="checkbox" id="txType_DEPOSIT" value="DEPOSIT" checked>
-                                <label for="txType_DEPOSIT">存款 (Deposit)</label>
+                                <label for="txType_JOURNAL"><strong>轉帳 (Journal)</strong> <small class="text-muted">(0)</small></label>
                             </div>
                             <div class="checkbox-item">
                                 <input type="checkbox" id="txType_WITHDRAWAL" value="WITHDRAWAL" checked>
-                                <label for="txType_WITHDRAWAL">提款 (Withdrawal)</label>
+                                <label for="txType_WITHDRAWAL"><strong>提款 (Withdrawal)</strong> <small class="text-muted">(0)</small></label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_DEPOSIT" value="DEPOSIT" checked>
+                                <label for="txType_DEPOSIT"><strong>存款 (Deposit)</strong> <small class="text-muted">(0)</small></label>
+                            </div>
+                            
+                            <!-- Income & Distributions -->
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_DIVIDEND" value="DIVIDEND" checked>
+                                <label for="txType_DIVIDEND"><strong>股息 (Dividend)</strong> <small class="text-muted">(0)</small></label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_INTEREST" value="INTEREST" checked>
+                                <label for="txType_INTEREST"><strong>利息 (Interest)</strong> <small class="text-muted">(0)</small></label>
+                            </div>
+                            
+                            <!-- Fees & Taxes -->
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_TAX" value="TAX" checked>
+                                <label for="txType_TAX"><strong>稅款 (Tax)</strong> <small class="text-muted">(0)</small></label>
+                            </div>
+                            
+                            <!-- Corporate Actions & Investment Events -->
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_SPLIT" value="SPLIT" checked>
+                                <label for="txType_SPLIT"><strong>股票分割 (Stock Split)</strong> <small class="text-muted">(0)</small></label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="txType_OTHER" value="OTHER" checked>
+                                <label for="txType_OTHER"><strong>投資事件 (Investment Events)</strong> <small class="text-muted">(0)</small></label>
                             </div>
                         </div>
                     </div>
@@ -553,7 +573,8 @@
                             <tr>
                                 <th>日期 (Date)</th>
                                 <th>股票 (Symbol)</th>
-                                <th>類型 (Type)</th>
+                                <th>類別 (Category)</th>
+                                <th>動作 (Action)</th>
                                 <th>數量 (Quantity)</th>
                                 <th>價格 (Price)</th>
                                 <th>金額 (Amount)</th>
