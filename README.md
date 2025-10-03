@@ -282,6 +282,58 @@ To add support for a new broker:
    }
    ```
 
+## Testing
+
+### End-to-End (E2E) Tests
+
+This project includes comprehensive Playwright E2E tests for the web dashboard.
+
+#### Test Coverage
+- **Filter Tests**: Year, date, broker, symbol, and transaction type filters
+- **Data Validation**: Realized P&L, fees, taxes, net amounts
+- **Export Functionality**: Export to "My Stocks" app CSV format
+
+#### Quick Start
+
+```bash
+# Install dependencies
+./test-runner.sh install
+
+# Start server on port 5001
+./test-runner.sh start
+
+# Run all tests
+./test-runner.sh test-all
+
+# Run tests in headed mode (visible browser)
+./test-runner.sh test-all --headed
+
+# Show test report
+./test-runner.sh report
+
+# Stop server
+./test-runner.sh stop
+```
+
+#### Test Runner Commands
+
+The `test-runner.sh` script provides convenient commands for managing the test server and running tests:
+
+```bash
+./test-runner.sh start           # Start Flask server on port 5001
+./test-runner.sh stop            # Stop Flask server
+./test-runner.sh install         # Install all dependencies
+./test-runner.sh test-all        # Run all E2E tests
+./test-runner.sh test-filters    # Run filter tests only
+./test-runner.sh test-data       # Run data validation tests only
+./test-runner.sh test-export     # Run export tests only
+./test-runner.sh test FILE       # Run specific test file
+./test-runner.sh report          # Show test report
+./test-runner.sh help            # Show help message
+```
+
+For more details, see [tests/README.md](tests/README.md).
+
 ## Development Status
 
 This project is actively in development. Current features include multi-broker statement processing and basic web dashboard functionality.
