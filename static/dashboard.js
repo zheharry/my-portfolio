@@ -284,7 +284,11 @@ class PortfolioDashboard {
     // Load filter options
     async loadFilterOptions() {
         try {
-            // Load brokers FIRST and ensure broker keys are loaded before proceeding
+            // Load users FIRST
+            const users = await this.fetchAPI('/api/users');
+            this.populateSelect('userFilter', users);
+            
+            // Load brokers and ensure broker keys are loaded before proceeding
             const brokerData = await this.fetchAPI('/api/brokers');
             this.brokerKeys = brokerData.broker_keys || {};
             console.log('Broker keys loaded:', this.brokerKeys);
@@ -664,6 +668,7 @@ class PortfolioDashboard {
 
         // Handle multi-select checkboxes
         const multiSelectMappings = {
+            'userFilter': 'user',
             'brokerFilter': 'broker',
             'symbolFilter': 'symbol',
             'transactionTypeFilter': 'transaction_type'

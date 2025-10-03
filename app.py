@@ -96,7 +96,8 @@ class PortfolioAPI:
                     account_type TEXT,
                     account_holder TEXT,
                     created_date TEXT,
-                    currency TEXT DEFAULT 'USD'
+                    currency TEXT DEFAULT 'USD',
+                    user TEXT
                 )
             """)
             
@@ -119,6 +120,7 @@ class PortfolioAPI:
                     order_id TEXT,
                     description TEXT,
                     currency TEXT DEFAULT 'USD',
+                    user TEXT,
                     FOREIGN KEY (account_id) REFERENCES accounts (account_id)
                 )
             """)
@@ -148,7 +150,7 @@ class PortfolioAPI:
             self._migrate_currency_columns(cursor)
     
     def _migrate_currency_columns(self, cursor):
-        """Add currency and chinese_name columns to existing tables and populate based on broker"""
+        """Add currency, chinese_name, and user columns to existing tables and populate based on broker"""
         try:
             # Check and add currency column to accounts table
             cursor.execute("PRAGMA table_info(accounts)")
@@ -157,6 +159,10 @@ class PortfolioAPI:
             if 'currency' not in accounts_columns:
                 cursor.execute("ALTER TABLE accounts ADD COLUMN currency TEXT DEFAULT 'USD'")
                 print("Added currency column to accounts table")
+            
+            if 'user' not in accounts_columns:
+                cursor.execute("ALTER TABLE accounts ADD COLUMN user TEXT")
+                print("Added user column to accounts table")
             
             # Check and add currency column to transactions table
             cursor.execute("PRAGMA table_info(transactions)")
@@ -170,6 +176,10 @@ class PortfolioAPI:
             if 'chinese_name' not in transactions_columns:
                 cursor.execute("ALTER TABLE transactions ADD COLUMN chinese_name TEXT")
                 print("Added chinese_name column to transactions table")
+            
+            if 'user' not in transactions_columns:
+                cursor.execute("ALTER TABLE transactions ADD COLUMN user TEXT")
+                print("Added user column to transactions table")
             
             # Check and add currency column to positions table
             cursor.execute("PRAGMA table_info(positions)")
@@ -364,6 +374,27 @@ class PortfolioAPI:
                 'brokers': [entry['display'] for entry in broker_entries],
                 'broker_keys': {entry['display']: entry['key'] for entry in broker_entries}
             }
+    
+    def get_users(self):
+        """Get all unique users from transactions"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get distinct users from transactions table
+            cursor.execute("""
+                SELECT DISTINCT user
+                FROM transactions
+                WHERE user IS NOT NULL
+                ORDER BY user
+            """)
+            
+            users = [row[0] for row in cursor.fetchall() if row[0]]
+            
+            # If no users found, return empty list
+            if not users:
+                return []
+            
+            return users
     
     def get_symbols(self, broker_filters=None):
         """Get all unique symbols, optionally filtered by broker"""
@@ -721,6 +752,19 @@ class PortfolioAPI:
                     # Single transaction type (backward compatibility)
                     query += " AND t.transaction_type = ?"
                     params.append(transaction_type_filter)
+            
+            # Handle multi-select user filter
+            if filters.get('user'):
+                user_filter = filters['user']
+                if isinstance(user_filter, list):
+                    if len(user_filter) > 0:
+                        placeholders = ','.join(['?' for _ in user_filter])
+                        query += f" AND t.user IN ({placeholders})"
+                        params.extend(user_filter)
+                else:
+                    # Single user (backward compatibility)
+                    query += " AND t.user = ?"
+                    params.append(user_filter)
             
             if filters.get('start_date'):
                 query += " AND t.transaction_date >= ?"
@@ -1853,6 +1897,12 @@ def api_brokers():
     # Return both broker names and keys for frontend processing
     return jsonify(broker_data)
 
+@app.route('/api/users')
+def api_users():
+    """Get all users"""
+    users = portfolio_api.get_users()
+    return jsonify(users)
+
 @app.route('/api/symbols')
 def api_symbols():
     """Get all symbols, optionally filtered by broker"""
@@ -1881,6 +1931,7 @@ def api_transactions():
         'broker': request.args.getlist('broker'),  # Support multiple brokers
         'symbol': request.args.getlist('symbol'),  # Support multiple symbols
         'transaction_type': request.args.getlist('transaction_type'),  # Support multiple transaction types
+        'user': request.args.getlist('user'),  # Support multiple users
         'start_date': request.args.get('start_date'),
         'end_date': request.args.get('end_date'),
         'year': request.args.get('year'),
