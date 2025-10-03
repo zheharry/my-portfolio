@@ -1100,7 +1100,7 @@ class PortfolioAPI:
         return breakdown
 
     def _get_current_holdings(self, filters=None):
-        """Get current holdings (bought - sold quantities > 0)"""
+        """Get current holdings (bought - sold quantities, including zero and negative holdings)"""
         # Broker mapping for filtering
         broker_mapping = {
             '國泰證券': 'CATHAY',
@@ -1171,7 +1171,7 @@ class PortfolioAPI:
                 holdings_query += " AND strftime('%Y', t.transaction_date) = ?"
                 params.append(str(filters['year']))
         
-        holdings_query += " GROUP BY t.symbol, t.broker, t.currency HAVING current_holding > 0"
+        holdings_query += " GROUP BY t.symbol, t.broker, t.currency HAVING current_holding != 0"
         
         with self.get_connection() as conn:
             cursor = conn.cursor()
