@@ -25,9 +25,20 @@ Install dependencies using the test runner script:
 Or manually:
 
 ```bash
+# Install Node.js dependencies
 npm install
+
+# Install Playwright browsers (requires internet connection)
 npx playwright install chromium webkit
+
+# If browser installation fails, try with dependencies:
+npx playwright install --with-deps chromium webkit
 ```
+
+**Note**: Browser installation requires downloading large files (~170 MB per browser). Ensure you have:
+- Stable internet connection
+- Sufficient disk space (~500 MB)
+- Proper network permissions (not behind restrictive firewall)
 
 ## Running Tests
 
@@ -244,5 +255,7 @@ Tests can be integrated into CI/CD pipelines. Example:
 
 - Server runs on port **5001** (configured via FLASK_PORT environment variable)
 - Tests use the desktop-only configuration (no mobile browsers)
+- Browser support: Chrome/Edge (Chromium), Safari (WebKit) on Windows/Mac
 - Download tests save files to `test-results/downloads/`
 - Tests are designed to work with real data or empty database
+- Tests validate filters, data calculations, and export functionality as specified in requirements
