@@ -1546,6 +1546,7 @@ class MultiBrokerPortfolioParser:
                 'broker_counts': {},
                 'total_accounts': 0,
                 'total_transactions': 0,
+                'holdings_by_broker': {},
                 'generated_at': datetime.now().isoformat()
             }
             
@@ -1567,6 +1568,46 @@ class MultiBrokerPortfolioParser:
             cursor.execute("SELECT COUNT(*) FROM transactions")
             report['total_transactions'] = cursor.fetchone()[0]
             
+            # Get holdings by broker and symbol (including all holdings, positive or negative)
+            cursor.execute("""
+                SELECT 
+                    t.broker,
+                    t.symbol,
+                    t.chinese_name,
+                    SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.quantity ELSE 0 END) as bought_qty,
+                    SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN ABS(t.quantity) ELSE 0 END) as sold_qty,
+                    SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.quantity 
+                             WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN -ABS(t.quantity) ELSE 0 END) as current_holding,
+                    AVG(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.price ELSE NULL END) as avg_cost,
+                    t.currency
+                FROM transactions t 
+                WHERE t.symbol IS NOT NULL AND t.symbol != ''
+                GROUP BY t.symbol, t.broker, t.chinese_name, t.currency
+                ORDER BY t.broker, t.symbol
+            """)
+            
+            holdings_results = cursor.fetchall()
+            
+            # Organize holdings by broker
+            for broker, symbol, chinese_name, bought_qty, sold_qty, current_holding, avg_cost, currency in holdings_results:
+                if broker not in report['holdings_by_broker']:
+                    report['holdings_by_broker'][broker] = []
+                
+                holding_info = {
+                    'symbol': symbol,
+                    'bought_qty': bought_qty,
+                    'sold_qty': sold_qty,
+                    'current_holding': current_holding,
+                    'avg_cost': round(avg_cost, 2) if avg_cost else 0,
+                    'currency': currency
+                }
+                
+                # Add chinese_name only if it exists (CATHAY broker)
+                if chinese_name:
+                    holding_info['chinese_name'] = chinese_name
+                
+                report['holdings_by_broker'][broker].append(holding_info)
+            
             # Save report
             report_path = Path("outputs/reports/processing_report.json")
             report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1582,6 +1623,36 @@ class MultiBrokerPortfolioParser:
                 print(f"\\n{broker}:")
                 for status, stats in counts.items():
                     print(f"  {status}: {stats['files']} files, {stats['records']} records")
+            
+            # Print holdings summary
+            print(f"\\n=== Holdings by Broker ===")
+            for broker, holdings in report['holdings_by_broker'].items():
+                print(f"\\n{broker}:")
+                total_positions = len(holdings)
+                positive_holdings = len([h for h in holdings if h['current_holding'] > 0])
+                negative_holdings = len([h for h in holdings if h['current_holding'] < 0])
+                zero_holdings = len([h for h in holdings if h['current_holding'] == 0])
+                
+                print(f"  Total symbols: {total_positions}")
+                print(f"  Active positions (>0): {positive_holdings}")
+                print(f"  Short positions (<0): {negative_holdings}")
+                print(f"  Closed positions (=0): {zero_holdings}")
+                print(f"\\n  Symbol Details:")
+                
+                for holding in holdings:
+                    symbol_display = holding['symbol']
+                    if 'chinese_name' in holding:
+                        symbol_display = f"{holding['symbol']} ({holding['chinese_name']})"
+                    
+                    position_type = ""
+                    if holding['current_holding'] > 0:
+                        position_type = "[LONG]"
+                    elif holding['current_holding'] < 0:
+                        position_type = "[SHORT]"
+                    else:
+                        position_type = "[CLOSED]"
+                    
+                    print(f"    {position_type} {symbol_display}: {holding['current_holding']:.2f} shares @ avg ${holding['avg_cost']:.2f} {holding['currency']}")
     
     def _parse_new_schwab_format(self, line: str) -> Dict:
         """Parse the new Schwab transaction format where quantity is not in parentheses
