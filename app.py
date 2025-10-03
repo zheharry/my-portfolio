@@ -943,7 +943,7 @@ class PortfolioAPI:
                 t.symbol,
                 t.broker,
                 SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.quantity ELSE 0 END) as total_bought,
-                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.quantity ELSE 0 END) as total_sold,
+                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN ABS(t.quantity) ELSE 0 END) as total_sold,
                 SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN ABS(t.net_amount) ELSE 0 END) as total_invested,
                 SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.net_amount ELSE 0 END) as total_received,
                 t.currency
@@ -1034,7 +1034,7 @@ class PortfolioAPI:
                 t.symbol,
                 t.broker,
                 SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN t.quantity ELSE 0 END) as total_bought,
-                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.quantity ELSE 0 END) as total_sold,
+                SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN ABS(t.quantity) ELSE 0 END) as total_sold,
                 SUM(CASE WHEN t.transaction_type = '買進' OR t.transaction_type = 'BUY' THEN ABS(t.net_amount) ELSE 0 END) as total_invested,
                 SUM(CASE WHEN t.transaction_type = '賣出' OR t.transaction_type = 'SELL' THEN t.net_amount ELSE 0 END) as total_received,
                 t.currency
@@ -1650,7 +1650,7 @@ class PortfolioAPI:
                 t.symbol,
                 t.broker,
                 SUM(CASE WHEN t.transaction_type = 'BUY' THEN t.quantity ELSE 0 END) as total_bought,
-                SUM(CASE WHEN t.transaction_type = 'SELL' THEN t.quantity ELSE 0 END) as total_sold,
+                SUM(CASE WHEN t.transaction_type = 'SELL' THEN ABS(t.quantity) ELSE 0 END) as total_sold,
                 SUM(CASE WHEN t.transaction_type = 'BUY' THEN ABS(t.net_amount) ELSE 0 END) as total_invested,
                 SUM(CASE WHEN t.transaction_type = 'SELL' THEN t.net_amount ELSE 0 END) as total_received,
                 AVG(CASE WHEN t.transaction_type = 'BUY' THEN t.price ELSE NULL END) as avg_buy_price,

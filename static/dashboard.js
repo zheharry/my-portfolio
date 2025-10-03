@@ -1428,7 +1428,7 @@ class PortfolioDashboard {
                 const totalCommission = fee + tax;
                 
                 // Special handling for SPLIT transactions
-                let sharesOwned = t.quantity || '';
+                let sharesOwned = t.quantity ? Math.abs(t.quantity).toString() : '';
                 let costPerShare = t.price || '';
                 let commission = totalCommission.toString();
                 
