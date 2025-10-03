@@ -1,0 +1,21 @@
+{
+  "name": "my-portfolio-e2e",
+  "version": "1.0.0",
+  "description": "E2E tests for My Portfolio application",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug",
+    "test:report": "playwright show-report",
+    "test:filters": "playwright test tests/filters.spec.js",
+    "test:data": "playwright test tests/data.spec.js",
+    "test:export": "playwright test tests/export.spec.js"
+  },
+  "keywords": ["e2e", "testing", "playwright", "portfolio"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}
