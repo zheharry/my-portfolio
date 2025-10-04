@@ -93,6 +93,12 @@ coverage.xml
 *.cover
 .hypothesis/
 
+# Playwright and E2E testing
+node_modules/
+test-results/
+playwright-report/
+playwright/.cache/
+
 # Virtual environments
 venv/
 env/
