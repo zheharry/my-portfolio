@@ -96,7 +96,8 @@ The web application will be available at: `http://localhost:5000`
 
 - `/api/accounts` - Get all accounts
 - `/api/brokers` - Get all brokers
-- `/api/transactions` - Get filtered transactions
+- `/api/users` - Get all users
+- `/api/transactions` - Get filtered transactions (supports user filter)
 - `/api/summary` - Get portfolio summary
 - `/api/performance` - Get performance by year
 - `/api/process-all-statements` - Process all statements (POST)
@@ -105,7 +106,14 @@ The web application will be available at: `http://localhost:5000`
 
 ```
 Statements/          # Broker statements (PDF/CSV) - ignored by git
-├── 2017/
+├── User - Harry/    # Statements for user "Harry" (optional user folder)
+│   ├── 2017/
+│   ├── 2018/
+│   └── ...
+├── User - Mandy/    # Statements for user "Mandy" (optional user folder)
+│   ├── 2023/
+│   └── 2024/
+├── 2017/            # Statements without user folder (assigned to "Unknown")
 ├── 2018/
 └── ...
 
@@ -122,6 +130,15 @@ templates/           # Flask HTML templates
 static/             # Web assets (CSS, JS)
 config/             # Configuration files
 ```
+
+### Multi-User Support
+
+The application supports organizing statements by user using folder naming:
+
+- **User Folders**: Create subfolders named `User - <Name>` (e.g., `User - Harry`, `User - Mandy`) under the `Statements/` directory
+- **User Detection**: The parser automatically detects the user from the folder name
+- **Unknown User**: Files not in a user folder are assigned to "Unknown" user
+- **User Filter**: The web dashboard includes a user filter to view transactions for specific users
 
 ## Data Privacy & Security
 

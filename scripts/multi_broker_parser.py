@@ -94,9 +94,17 @@ class MultiBrokerPortfolioParser:
                     broker TEXT,
                     account_type TEXT,
                     account_holder TEXT,
-                    created_date TEXT
+                    created_date TEXT,
+                    user TEXT
                 )
             """)
+            
+            # Add user column to existing accounts table if it doesn't exist
+            try:
+                cursor.execute("ALTER TABLE accounts ADD COLUMN user TEXT")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
             
             # Basic transactions table (compatible with existing)
             cursor.execute("""
@@ -116,9 +124,17 @@ class MultiBrokerPortfolioParser:
                     order_id TEXT,
                     description TEXT,
                     split_ratio TEXT DEFAULT NULL,
+                    user TEXT,
                     FOREIGN KEY (account_id) REFERENCES accounts (account_id)
                 )
             """)
+            
+            # Add user column to existing transactions table if it doesn't exist
+            try:
+                cursor.execute("ALTER TABLE transactions ADD COLUMN user TEXT")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
             
             # Add split_ratio column if it doesn't exist (for backward compatibility)
             try:
@@ -176,6 +192,26 @@ class MultiBrokerPortfolioParser:
             
             conn.commit()
             self.logger.info("Database schema initialized successfully")
+    
+    def extract_user_from_path(self, file_path: Path) -> str:
+        """
+        Extract user from file path structure.
+        Looks for "User - <name>" pattern in the path.
+        Returns the user name or "Unknown" if not found.
+        """
+        # Convert to string and look for "User - " pattern
+        path_str = str(file_path)
+        
+        # Look for "User - <name>" pattern in any part of the path
+        import re
+        match = re.search(r'User\s*-\s*([^/\\]+)', path_str)
+        if match:
+            user_name = match.group(1).strip()
+            self.logger.info(f"Detected user '{user_name}' from path: {file_path}")
+            return user_name
+        
+        # If no user folder found, return "Unknown"
+        return "Unknown"
     
     def extract_text_from_pdf(self, pdf_path: Path) -> str:
         """Extract text from PDF using pdftotext"""
@@ -1250,6 +1286,9 @@ class MultiBrokerPortfolioParser:
         
         account_info = data['account_info']
         
+        # Extract user from file path
+        user = self.extract_user_from_path(file_path)
+        
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -1261,14 +1300,16 @@ class MultiBrokerPortfolioParser:
                 cursor.execute("ALTER TABLE accounts ADD COLUMN currency TEXT DEFAULT 'USD'")
             if 'status' not in columns:
                 cursor.execute("ALTER TABLE accounts ADD COLUMN status TEXT DEFAULT 'ACTIVE'")
+            if 'user' not in columns:
+                cursor.execute("ALTER TABLE accounts ADD COLUMN user TEXT")
             
             # Determine currency based on broker
             currency = 'NTD' if broker == 'CATHAY' else 'USD'
             
             cursor.execute("""
                 INSERT OR REPLACE INTO accounts 
-                (account_id, institution, broker, account_type, account_holder, created_date, currency)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (account_id, institution, broker, account_type, account_holder, created_date, currency, user)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 account_info.get('account_id'),
                 account_info.get('institution'),
@@ -1276,7 +1317,8 @@ class MultiBrokerPortfolioParser:
                 account_info.get('account_type'),
                 account_info.get('account_holder'),
                 account_info.get('statement_date', datetime.now().isoformat()),
-                currency
+                currency,
+                user
             ))
             
             conn.commit()
@@ -1289,6 +1331,9 @@ class MultiBrokerPortfolioParser:
         account_id = data.get('account_info', {}).get('account_id')
         if not account_id:
             return
+        
+        # Extract user from file path
+        user = self.extract_user_from_path(file_path)
         
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -1305,6 +1350,8 @@ class MultiBrokerPortfolioParser:
                 cursor.execute("ALTER TABLE transactions ADD COLUMN currency TEXT DEFAULT 'USD'")
             if 'chinese_name' not in columns:
                 cursor.execute("ALTER TABLE transactions ADD COLUMN chinese_name TEXT")
+            if 'user' not in columns:
+                cursor.execute("ALTER TABLE transactions ADD COLUMN user TEXT")
             
             # Determine currency and display broker name based on broker type
             if broker == 'CATHAY':
@@ -1318,8 +1365,8 @@ class MultiBrokerPortfolioParser:
                 cursor.execute("""
                     INSERT OR REPLACE INTO transactions 
                     (account_id, transaction_date, symbol, chinese_name, transaction_type, quantity, price, 
-                     amount, fee, tax, net_amount, broker, order_id, description, source_file, currency, split_ratio)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     amount, fee, tax, net_amount, broker, order_id, description, source_file, currency, split_ratio, user)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     account_id,
                     transaction.get('transaction_date'),
@@ -1337,7 +1384,8 @@ class MultiBrokerPortfolioParser:
                     transaction.get('description'),
                     str(file_path),
                     currency,
-                    transaction.get('split_ratio')
+                    transaction.get('split_ratio'),
+                    user
                 ))
             
             conn.commit()

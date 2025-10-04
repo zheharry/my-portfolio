@@ -275,15 +275,28 @@
         <div class="filter-section">
             <h4><i class="fas fa-filter"></i> Advanced Filters</h4>
             
-            <!-- First Row: Year, Start Date, End Date -->
+            <!-- First Row: User, Year, Start Date, End Date -->
             <div class="row mb-3">
-                <div class="col-md-3">
+                <div class="col-md-2">
+                    <label class="form-label">使用者 (User)</label>
+                    <div class="multi-select-container">
+                        <div class="multi-select-controls">
+                            <button type="button" class="btn btn-sm btn-outline-primary select-all-btn" data-target="userFilter">全選</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary deselect-all-btn" data-target="userFilter">全消</button>
+                            <span class="selected-count-text" id="userCount">0 / 0</span>
+                        </div>
+                        <div class="multi-select-list" id="userFilter" data-max-height="120px">
+                            <!-- Checkboxes will be populated here -->
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-2">
                     <label class="form-label">年份 (Year)</label>
                     <select id="yearFilter" class="form-select">
                         <option value="">所有年份 (All Years)</option>
                     </select>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-5">
                     <label class="form-label">日期範圍 (Date Range)</label>
                     <div class="input-group">
                         <input type="text" id="dateRangePicker" class="form-control" placeholder="選擇日期範圍 / Select date range" readonly>
